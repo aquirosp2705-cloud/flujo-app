@@ -29,6 +29,8 @@ el cuadrito azul de la esquina de la selección arrastra fórmulas, y la barra i
    *Repository access: Only select repositories* → `flujo-datos` → *Permissions → Repository permissions → Contents: Read and write* → generar y copiar.
 4. Abre la app → **Ajustes → Sincronización**, escribe tu usuario, el repositorio (`flujo-datos`) y pega el token → *Probar conexión* → *Descargar todo desde GitHub*.
 
+Atajo: abre la app con `?owner=TU-USUARIO&repo=flujo-datos` al final de la dirección y esos campos ya vienen rellenos (el token nunca va en el enlace).
+
 Después, cada cambio se guarda en el dispositivo y se sube a GitHub a los pocos segundos; en tus otros dispositivos se baja al abrir la app.
 Si editas lo mismo en dos dispositivos a la vez, la app te muestra el conflicto y tú eliges qué versión conservar. Como cada cambio es un *commit*, el historial de GitHub sirve de copia de seguridad.
 

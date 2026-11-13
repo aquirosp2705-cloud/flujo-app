@@ -66,10 +66,23 @@ async function boot() {
     catch (e) { console.error(e); state.store = null; toast('No se pudo abrir el almacenamiento local: ' + e.message, { type: 'error', ms: 8000 }); }
   }
   const S = state.mods['sync-github'];
-  if (state.store && S) { try { state.sync = await S.GithubSync.fromStore(state.store); } catch (e) { console.warn('[sync] no disponible', e); } }
+  if (state.store && S) { try { state.sync = await S.GithubSync.fromStore(state.store); applyUrlConfig(); } catch (e) { console.warn('[sync] no disponible', e); } }
   if (bundle && syncOn() && navigator.onLine) bundle = await preSync(bundle);     // trae lo que otro dispositivo haya guardado ANTES de armar el motor
   if (!bundle) bundle = await firstRun();
   await startWithBundle(bundle);
+}
+
+/** Enlace de configuración: ?owner=USUARIO&repo=flujo-datos[&branch=main] rellena esos campos (nunca el token) para no teclearlos en el celular. */
+function applyUrlConfig() {
+  if (!state.sync || state.sync.isConfigured()) return;
+  const q = new URLSearchParams(location.search);
+  const ok = (v) => /^[A-Za-z0-9_.-]{1,100}$/.test(v);
+  const owner = (q.get('owner') || '').trim(), repo = (q.get('repo') || '').trim(), branch = (q.get('branch') || '').trim();
+  const cur = state.sync.getConfig(), patch = {};
+  if (owner && ok(owner) && !cur.owner) patch.owner = owner;
+  if (repo && ok(repo) && !cur.repo) patch.repo = repo;
+  if (branch && ok(branch)) patch.branch = branch;
+  if (Object.keys(patch).length) { try { state.sync.setConfig(patch); } catch (e) { console.warn(e); } }
 }
 
 /** Al abrir la app: si hay GitHub configurado, baja primero los cambios de otros dispositivos (máx. 9 s; si falla, se sigue con lo local). */
@@ -116,6 +129,7 @@ function showOnboarding(resolve) {
   const S = state.mods['sync-github'], U = state.mods['settings-ui'];
   if (S && U && state.store) {
     if (!state.sync) state.sync = new S.GithubSync(state.store, {});
+    applyUrlConfig();
     U.mountSyncSettings(gh, { store: state.store, sync: state.sync, engine: null, onBundleReplaced: (b) => finish(b) });
   } else gh.append(el('p', { class: 'muted', text: 'La sincronización con GitHub no está disponible en esta versión.' }));
 }

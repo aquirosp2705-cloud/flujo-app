@@ -17,7 +17,7 @@
  */
 'use strict';
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 
 /* "App shell" que se precarga al instalar. Rutas relativas a la carpeta de sw.js. Si algún archivo no existe (todavía)
  * se avisa en la consola pero la instalación sigue: lo importante es que una errata no deje la app sin service worker. */

@@ -137,12 +137,38 @@ def git_commit_push(stage, owner, repo, private, msg):
     return info
 
 
+def update_app(stage, owner, repo, msg):
+    """Actualiza un repositorio de app YA publicado: clona, reemplaza los archivos por los preparados y sube solo si hay cambios."""
+    clone = tempfile.mkdtemp(prefix='flujo-clone-')
+    try:
+        run(['gh', 'repo', 'clone', '%s/%s' % (owner, repo), clone])
+        for name in os.listdir(clone):
+            if name == '.git':
+                continue
+            p = os.path.join(clone, name)
+            shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+        for name in os.listdir(stage):
+            s, d = os.path.join(stage, name), os.path.join(clone, name)
+            shutil.copytree(s, d) if os.path.isdir(s) else shutil.copy2(s, d)
+        ensure_identity(clone)
+        run(['git', 'add', '-A'], cwd=clone)
+        if not run(['git', 'status', '--porcelain'], cwd=clone).stdout.strip():
+            return None
+        run(['git', 'commit', '-m', msg, '-m', 'Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>'], cwd=clone)
+        run(['git', 'push', 'origin', 'HEAD'], cwd=clone)
+        return run(['git', 'rev-parse', '--short', 'HEAD'], cwd=clone).stdout.strip()
+    finally:
+        shutil.rmtree(clone, ignore_errors=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('what', choices=['data', 'app'])
     ap.add_argument('--owner', required=True)
     ap.add_argument('--repo', required=True)
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--update', action='store_true', help='(solo app) actualiza un repositorio ya publicado en lugar de crearlo')
+    ap.add_argument('--message', default='Flujo: actualización de la app')
     a = ap.parse_args()
     need_gh()
     stage = tempfile.mkdtemp(prefix='flujo-publish-')
@@ -168,6 +194,10 @@ def main():
             print('\nEscaneo de privacidad: sin hallazgos.')
             if a.dry_run:
                 print('(dry-run) no se subió nada.'); return
+            if a.update:
+                sha = update_app(stage, a.owner, a.repo, a.message)
+                print('Sin cambios que subir.' if sha is None else 'Actualización subida (commit %s). GitHub Pages la publica en 1-2 min.' % sha)
+                return
             info = git_commit_push(stage, a.owner, a.repo, False, 'Flujo: app web')
             r = run(['gh', 'api', '-X', 'POST', 'repos/%s/%s/pages' % (a.owner, a.repo), '-f', 'source[branch]=main', '-f', 'source[path]=/'], check=False)
             print('Pages:', 'activado' if r.returncode == 0 else ('ya estaba activo o falló: ' + (r.stderr or r.stdout).strip()[:200]))

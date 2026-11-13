@@ -1,0 +1,133 @@
+/* quick.css — capturas rápidas (menú "Registrar" y formularios). Todas las clases llevan el prefijo qk-.
+ * Usa las variables de app.css (--card --ink --muted --line --soft --pri --pos --neg --warn …), así que sigue el tema claro/oscuro. */
+
+.qk-hub, .qk-form { max-width: 760px; margin: 0 auto; }
+.qk-hub-head { margin: 2px 2px 14px; }
+.qk-hub-head h2 { font-size: 20px; margin: 0 0 4px; }
+.qk-hub-head p { margin: 0; font-size: 14px; }
+
+/* ---------- menú: una tarjeta por formulario ---------- */
+.qk-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+.qk-card {
+  display: flex; align-items: center; gap: 14px; width: 100%; min-height: 96px; padding: 14px 12px 14px 12px; text-align: left;
+  background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
+  cursor: pointer; font: inherit; appearance: none; -webkit-tap-highlight-color: transparent;
+}
+.qk-card:hover { border-color: var(--pri); }
+.qk-card:active { transform: translateY(1px); }
+.qk-card[disabled] { opacity: .55; cursor: not-allowed; }
+.qk-card:focus-visible, .qk-pol-item:focus-visible, .qk-op:focus-visible, .qk-more summary:focus-visible { outline: 3px solid var(--pri); outline-offset: 2px; }
+.qk-ico { flex: none; width: 46px; height: 46px; display: grid; place-items: center; border-radius: 14px; background: var(--soft); border: 1px solid var(--line); font-size: 24px; line-height: 1; }
+.qk-ico.big { width: 52px; height: 52px; font-size: 28px; }
+.qk-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.qk-card-title { font-weight: 700; font-size: 16px; line-height: 1.25; }
+.qk-card-desc { color: var(--muted); font-size: 13px; line-height: 1.3; }
+.qk-chev { flex: none; color: var(--muted); font-size: 28px; line-height: 1; padding: 0 2px; }
+
+/* estado de cada formulario (el color nunca es la única señal: lleva icono y texto) */
+.qk-st { display: flex; align-items: flex-start; gap: 8px; margin-top: 6px; font-size: 13px; line-height: 1.25; }
+.qk-st-t { display: flex; flex-direction: column; min-width: 0; }
+.qk-st-t b { font-weight: 650; }
+.qk-st-t small { color: var(--muted); font-size: 12px; margin-top: 1px; }
+.qk-dot { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 12px/1 system-ui, sans-serif; font-style: normal; color: var(--card); background: var(--muted); }
+.qk-st-ok .qk-dot { background: var(--pos); }
+.qk-st-warn .qk-dot { background: var(--warn); }
+.qk-st-late .qk-dot { background: var(--neg); }
+.qk-st-info .qk-dot { background: var(--pri); }
+.qk-st-late .qk-st-t b { color: var(--neg); }
+.qk-st-load .qk-st-t b { color: var(--muted); font-weight: 550; }
+.qk-st-load .qk-dot { animation: qk-pulse 1s infinite; }
+@keyframes qk-pulse { 50% { opacity: .35; } }
+
+/* ---------- formulario ---------- */
+.qk-form { display: flex; flex-direction: column; gap: 12px; }
+.qk-back { align-self: flex-start; margin-left: -6px; padding-left: 8px; padding-right: 12px; }
+.qk-title { display: flex; align-items: center; gap: 14px; }
+.qk-title h2 { font-size: 20px; margin: 0 0 2px; }
+.qk-title p { margin: 0; }
+.qk-band { display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; }
+.qk-band:empty, .qk-notes:empty, .qk-picker:empty { display: none; }
+.qk-bl { color: var(--muted); }
+.qk-bl-warn { color: var(--warn); font-weight: 650; }
+.qk-bl-late { color: var(--neg); font-weight: 650; }
+.qk-bw, .qk-chk { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border-radius: 10px; font-size: 13.5px; line-height: 1.35; background: var(--soft); border: 1px solid var(--line); }
+.qk-bw-warn { background: color-mix(in srgb, var(--warn) 13%, var(--card)); border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+.qk-chk { background: transparent; padding: 2px 4px; border: 0; color: var(--muted); }
+.qk-chk.good { color: var(--pos); }
+.qk-chk.bad { color: var(--warn); font-weight: 600; }
+.qk-bw-i { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 12px/1 system-ui, sans-serif; color: var(--card); background: var(--muted); }
+.qk-bw-warn .qk-bw-i, .qk-chk.bad .qk-bw-i { background: var(--warn); }
+.qk-chk.good .qk-bw-i { background: var(--pos); }
+.qk-use { margin-left: auto; flex: none; min-height: 34px; padding: 4px 12px; font-size: 13px; }
+.qk-sub { font-size: 14px; color: var(--muted); font-weight: 650; margin: 0 0 8px; }
+
+.qk-fields { display: flex; flex-direction: column; }
+.qk-field { margin-bottom: 12px; }
+.qk-field label, .qk-lbl { font-size: 13px; color: var(--muted); font-weight: 650; }
+.qk-field input[type=text], .qk-field input[type=month], .qk-field input[type=date] { min-height: 48px; font-size: 16px; }   /* 16 px: iOS no hace zoom al enfocar */
+.qk-inp { display: flex; align-items: stretch; gap: 6px; }
+.qk-inp input { flex: 1; min-width: 0; width: auto; }
+.qk-unit { flex: none; display: grid; place-items: center; min-width: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); color: var(--muted); font-weight: 650; font-size: 14px; }
+.qk-op { flex: none; width: 48px; min-height: 48px; appearance: none; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--pri); font-size: 24px; font-weight: 600; line-height: 1; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.qk-op:active { background: var(--soft); transform: translateY(1px); }
+.qk-help { font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+.qk-live { font-size: 13.5px; font-weight: 650; color: var(--pri); font-variant-numeric: tabular-nums; }
+.qk-err { font-size: 13px; font-weight: 650; color: var(--neg); }
+.qk-help:empty, .qk-live:empty, .qk-err:empty { display: none; }
+.qk-field input[aria-invalid="true"] { border-color: var(--neg); outline-color: var(--neg); }
+.qk-seg { display: flex; width: 100%; }
+.qk-seg button { flex: 1; min-height: 48px; font-size: 15px; }
+.qk-check label { display: flex; align-items: flex-start; gap: 10px; min-height: 44px; font-size: 14px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.qk-check input { flex: none; width: 22px; height: 22px; min-height: 0; margin: 1px 0 0; padding: 0; accent-color: var(--pri); }
+
+/* selector de póliza */
+.qk-pol { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.qk-pol-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 62px; padding: 10px 12px; text-align: left; background: var(--card); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; font: inherit; cursor: pointer; appearance: none; -webkit-tap-highlight-color: transparent; }
+.qk-pol-item.on { border-color: var(--pri); box-shadow: inset 0 0 0 1px var(--pri); background: color-mix(in srgb, var(--pri) 9%, var(--card)); }
+.qk-pol-main { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.qk-pol-main b { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qk-pol-main small { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.qk-badge { flex: none; max-width: 46%; padding: 3px 9px; border-radius: 99px; border: 1px solid var(--line); background: var(--soft); color: var(--muted); font-size: 12px; line-height: 1.25; text-align: center; }
+.qk-lv-late, .qk-lv-due { color: var(--neg); border-color: var(--neg); font-weight: 650; }
+.qk-lv-soon { color: var(--warn); border-color: var(--warn); font-weight: 650; }
+
+/* vista previa y último registro */
+.qk-preview h3 { font-size: 14px; color: var(--muted); font-weight: 650; margin: 0 0 8px; }
+.qk-hint { margin: 0; font-size: 14px; }
+.qk-dl { display: grid; grid-template-columns: 1fr auto; gap: 7px 14px; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.qk-dl dt { color: var(--muted); font-size: 13.5px; }
+.qk-dl dd { margin: 0; text-align: right; font-size: 14.5px; }
+.qk-sum { padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.qk-was { color: var(--muted); }
+.qk-arrow { color: var(--muted); }
+.qk-more { margin: 2px 0 0; }
+.qk-more summary { cursor: pointer; color: var(--pri); font-weight: 600; font-size: 13.5px; padding: 6px 0; min-height: 36px; }
+.qk-small { font-size: 12.5px; margin: 8px 0 0; line-height: 1.35; }
+.qk-errs { margin: 8px 0 0; padding-left: 18px; color: var(--neg); font-size: 13.5px; }
+.qk-notes { display: flex; flex-direction: column; gap: 8px; }
+.qk-last { padding: 14px; border-radius: var(--radius); border: 1px solid var(--pos); background: color-mix(in srgb, var(--pos) 10%, var(--card)); }
+.qk-last[hidden] { display: none; }
+.qk-last .qk-sub { color: var(--pos); }
+
+/* barra de acción pegada abajo, al alcance del pulgar */
+.qk-bar { position: sticky; bottom: 0; z-index: 3; display: flex; gap: 10px; margin-top: 2px; padding: 12px 0 calc(10px + var(--safe-b, 0px)); background: linear-gradient(to top, var(--bg) 72%, transparent); }
+.qk-save { flex: 1; min-height: 52px; font-size: 16px; }
+.qk-view { min-height: 52px; }
+
+/* botón "Deshacer" dentro del aviso (los avisos siempre son oscuros) */
+.qk-toast-btn { appearance: none; margin-left: 6px; padding: 5px 12px; border: 1px solid rgba(255, 255, 255, .6); border-radius: 8px; background: transparent; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.qk-toast-btn:active { background: rgba(255, 255, 255, .18); }
+
+@supports not (background: color-mix(in srgb, red 10%, white)) {
+  .qk-bw-warn { background: var(--soft); border-color: var(--warn); }
+  .qk-pol-item.on { background: var(--soft); }
+  .qk-last { background: var(--card); }
+}
+@media (min-width: 900px) {
+  .qk-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .qk-form { max-width: 640px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qk-card:active, .qk-op:active { transform: none; }
+  .qk-st-load .qk-dot { animation: none; }
+}

@@ -1,0 +1,56 @@
+/* grid.css — estilos de la cuadrícula (siempre en tema claro para respetar los colores del Excel original) */
+.fxg { display: flex; flex-direction: column; height: 100%; min-height: 0; background: #fff; color: #111; --rh: 46px; --ch: 22px; --rowh: 22px; --fxz: 1;
+  font: 13px/1.2 system-ui, "Segoe UI", Roboto, Arial, sans-serif; -webkit-tap-highlight-color: transparent; }
+.fxg * { box-sizing: border-box; }
+.fxg-tools { display: flex; align-items: center; gap: 4px; padding: 4px 6px; overflow-x: auto; white-space: nowrap; background: #f4f6f7; border-bottom: 1px solid #d8dcdf; scrollbar-width: thin; }
+.fxg-tools button { font: inherit; padding: 5px 9px; border: 1px solid #c9ced2; border-radius: 6px; background: #fff; color: #1d2b2e; cursor: pointer; min-height: 30px; }
+.fxg-tools button:hover { background: #eef3f4; }
+.fxg-tools button:active { background: #dfe9ea; }
+.fxg-tools .fxg-sp { flex: 1; }
+.fxg-tools .fxg-zv { min-width: 40px; text-align: center; color: #44575b; font-size: 12px; }
+.fxg-bar { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: #fff; border-bottom: 1px solid #d8dcdf; }
+.fxg-name { width: 92px; flex: none; font: inherit; padding: 5px 6px; border: 1px solid #c9ced2; border-radius: 6px; text-align: center; }
+.fxg-fx { color: #6b7b7f; font-style: italic; font-weight: 600; }
+.fxg-formula { flex: 1; min-width: 0; font: inherit; padding: 5px 8px; border: 1px solid #c9ced2; border-radius: 6px; }
+.fxg-name:focus, .fxg-formula:focus { outline: 2px solid #1a73e8; outline-offset: -1px; }
+.fxg-body { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #fff; }
+.fxg-corner { position: absolute; left: 0; top: 0; width: var(--rh); height: var(--ch); background: #eef0f2; border-right: 1px solid #c4c9cd; border-bottom: 1px solid #c4c9cd; z-index: 4; }
+.fxg-colhdr { position: absolute; left: var(--rh); top: 0; right: 0; height: var(--ch); overflow: hidden; background: #eef0f2; border-bottom: 1px solid #c4c9cd; z-index: 3; user-select: none; }
+.fxg-colhdr-in { position: relative; height: 100%; will-change: transform; }
+.fxg-colhdr-in div { position: absolute; top: 0; height: 100%; text-align: center; line-height: var(--ch); color: #4a5559; border-right: 1px solid #cfd3d7; font-size: calc(12px * var(--fxz)); overflow: hidden; cursor: pointer; }
+.fxg-colhdr-in div.on, .fxg-rowhdr-in div.on { background: #d3e3fd; color: #0b3d91; font-weight: 600; }
+.fxg-rowhdr { position: absolute; left: 0; top: var(--ch); bottom: 0; width: var(--rh); overflow: hidden; background: #eef0f2; border-right: 1px solid #c4c9cd; z-index: 3; user-select: none; }
+.fxg-rowhdr-in { position: relative; width: 100%; will-change: transform; }
+.fxg-rowhdr-in div { position: absolute; left: 0; width: 100%; text-align: center; color: #4a5559; border-bottom: 1px solid #cfd3d7; font-size: calc(12px * var(--fxz)); cursor: pointer; }
+.fxg-scroll { position: absolute; left: var(--rh); top: var(--ch); right: 0; bottom: 0; overflow: auto; outline: none; overscroll-behavior: contain; touch-action: manipulation; -webkit-overflow-scrolling: touch; }
+.fxg-sizer { position: relative; }
+.fxg-layer { position: absolute; left: 0; top: 0; }
+.fxc { position: absolute; padding: 0 3px; white-space: nowrap; overflow: hidden; line-height: calc(var(--rowh) - 1px); font-size: calc(13px * var(--fxz)); background: #fff;
+  border-right: 1px solid #e4e7ea; border-bottom: 1px solid #e4e7ea; user-select: none; }
+.fxg-nogrid .fxc { border-color: transparent; }
+.fxc.n { text-align: right; }
+.fxc.e { text-align: center; color: #b3261e; }
+.fxc.b { text-align: center; }
+.fxc.ov { overflow: visible; z-index: 1; border-right-color: transparent; }
+.fxc.mg { display: flex; align-items: center; justify-content: center; text-align: center; white-space: normal; }
+.fxc.nt::after { content: ""; position: absolute; right: 0; top: 0; border-left: 7px solid transparent; border-top: 7px solid #d93025; }
+.fxg-sel { position: absolute; display: none; background: rgba(26, 115, 232, .12); border: 1px solid #1a73e8; pointer-events: none; z-index: 2; }
+.fxg-act { position: absolute; display: none; border: 2px solid #1a73e8; pointer-events: none; z-index: 3; }
+.fxg-handle { position: absolute; display: none; width: 9px; height: 9px; background: #1a73e8; border: 1px solid #fff; cursor: crosshair; z-index: 4; touch-action: none; }
+.fxg-clipbox { position: absolute; display: none; border: 2px dashed #188038; pointer-events: none; z-index: 3; }
+.fxg-fillbox { position: absolute; display: none; border: 2px dashed #1a73e8; pointer-events: none; z-index: 3; }
+.fxg-ed { position: absolute; display: none; z-index: 6; border: 2px solid #1a73e8; padding: 0 3px; font: inherit; background: #fff; color: #111; outline: none; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+.fxg-kb { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; padding: 0; border: 0; resize: none; }
+.fxg-status { display: flex; justify-content: space-between; gap: 10px; padding: 3px 8px; font-size: 12px; color: #44575b; background: #f4f6f7; border-top: 1px solid #d8dcdf; white-space: nowrap; overflow: hidden; }
+.fxg-st-l { overflow: hidden; text-overflow: ellipsis; }
+.fxg-ro .fxg-formula { background: #f4f6f7; }
+.fxg-more { display: none; flex: none; font: inherit; font-size: 20px; line-height: 1; width: 36px; height: 32px; border: 1px solid #c9ced2; border-radius: 6px; background: #fff; color: #1d2b2e; cursor: pointer; }
+@media (max-width: 640px) {
+  .fxg-name { width: 74px; }
+  .fxg-tools button { padding: 6px 8px; }
+  /* en el móvil las herramientas se esconden detrás de «⋯» para dejar más espacio a la hoja */
+  .fxg-tools { display: none; }
+  .fxg.fxg-tools-open .fxg-tools { display: flex; }
+  .fxg-more { display: inline-flex; align-items: center; justify-content: center; }
+  .fxg-fx { display: none; }
+}

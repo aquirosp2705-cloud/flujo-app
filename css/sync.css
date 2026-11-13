@@ -1,0 +1,185 @@
+/* sync.css — estilos del panel «Sincronización con GitHub» (js/settings-ui.js). Todas las clases llevan el prefijo "fx-".
+ * Los colores son variables: la aplicación puede redefinirlas en .fx-sync o en un ancestro (p. ej. --fx-accent).
+ * Modo oscuro: sigue prefers-color-scheme, o se fuerza con data-theme="dark" / "light" en el propio .fx-sync o en <html>. */
+
+.fx-sync {
+  --fx-fg: #1f2933;
+  --fx-muted: #5b6776;
+  --fx-surface: #ffffff;
+  --fx-surface-2: #f5f7fa;
+  --fx-border: #d3dae3;
+  --fx-accent: #1f5f99;
+  --fx-accent-fg: #ffffff;
+  --fx-accent-soft: #e6eff8;
+  --fx-ok: #1b6b3a;
+  --fx-ok-bg: #e8f5ec;
+  --fx-warn: #7a5200;
+  --fx-warn-bg: #fff4d8;
+  --fx-err: #9b1c24;
+  --fx-err-bg: #fdecec;
+  --fx-info-bg: #edf2f7;
+  --fx-focus: #1f5f99;
+  --fx-radius: 8px;
+
+  box-sizing: border-box;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 4px 2px 24px;
+  color: var(--fx-fg);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .fx-sync:not([data-theme="light"]) {
+    --fx-fg: #e6ebf1; --fx-muted: #9aa7b5; --fx-surface: #1b2129; --fx-surface-2: #222a34; --fx-border: #38424f;
+    --fx-accent: #6aa9e6; --fx-accent-fg: #0d1722; --fx-accent-soft: #1f3247;
+    --fx-ok: #7fd49c; --fx-ok-bg: #173324; --fx-warn: #f0c46a; --fx-warn-bg: #3a2f12;
+    --fx-err: #ff9a9f; --fx-err-bg: #3d1a1d; --fx-info-bg: #232d39; --fx-focus: #8fc2f3;
+  }
+}
+:root[data-theme="dark"] .fx-sync, .fx-sync[data-theme="dark"] {
+  --fx-fg: #e6ebf1; --fx-muted: #9aa7b5; --fx-surface: #1b2129; --fx-surface-2: #222a34; --fx-border: #38424f;
+  --fx-accent: #6aa9e6; --fx-accent-fg: #0d1722; --fx-accent-soft: #1f3247;
+  --fx-ok: #7fd49c; --fx-ok-bg: #173324; --fx-warn: #f0c46a; --fx-warn-bg: #3a2f12;
+  --fx-err: #ff9a9f; --fx-err-bg: #3d1a1d; --fx-info-bg: #232d39; --fx-focus: #8fc2f3;
+}
+
+.fx-sync *, .fx-sync *::before, .fx-sync *::after { box-sizing: border-box; }
+
+.fx-title { margin: 0 0 6px; font-size: 1.35rem; font-weight: 650; letter-spacing: -0.01em; }
+.fx-lead { margin: 0 0 14px; color: var(--fx-muted); }
+.fx-h3 { margin: 0 0 10px; font-size: 1rem; font-weight: 650; }
+
+.fx-card {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  border-radius: var(--fx-radius);
+}
+
+/* ----- formulario ----- */
+.fx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
+.fx-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.fx-field--token { grid-column: 1 / -1; }
+.fx-label { font-weight: 600; font-size: 0.86rem; }
+.fx-hint { color: var(--fx-muted); font-size: 0.8rem; }
+.fx-row { display: flex; gap: 8px; align-items: stretch; }
+.fx-row .fx-input { flex: 1 1 auto; min-width: 0; }
+
+.fx-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  color: inherit;
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  border-radius: 6px;
+  font: inherit;
+}
+.fx-input--token { font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; letter-spacing: 0.02em; }
+.fx-input:focus-visible, .fx-btn:focus-visible, .fx-details__summary:focus-visible {
+  outline: 2px solid var(--fx-focus);
+  outline-offset: 2px;
+}
+
+/* ----- botones ----- */
+.fx-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.fx-btn {
+  min-height: 40px;
+  padding: 8px 14px;
+  color: var(--fx-fg);
+  background: var(--fx-surface-2);
+  border: 1px solid var(--fx-border);
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.fx-btn:hover:not(:disabled) { border-color: var(--fx-accent); }
+.fx-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.fx-btn--primary { color: var(--fx-accent-fg); background: var(--fx-accent); border-color: var(--fx-accent); }
+.fx-btn--primary:hover:not(:disabled) { filter: brightness(1.08); }
+.fx-btn--quiet { background: transparent; color: var(--fx-muted); }
+.fx-btn--small { min-height: 0; padding: 0 12px; font-weight: 500; }
+.fx-btn[hidden] { display: none; }
+
+.fx-note {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  color: var(--fx-muted);
+  background: var(--fx-surface-2);
+  border-left: 3px solid var(--fx-border);
+  border-radius: 4px;
+  font-size: 0.86rem;
+}
+
+/* ----- progreso y mensajes ----- */
+.fx-progress { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.fx-progress[hidden], .fx-msg[hidden] { display: none; }
+.fx-progress__bar { flex: 0 0 38%; max-width: 260px; height: 10px; accent-color: var(--fx-accent); }
+.fx-progress__text { color: var(--fx-muted); font-size: 0.86rem; }
+
+.fx-msg {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--fx-info-bg);
+  border: 1px solid var(--fx-border);
+  border-radius: 6px;
+}
+.fx-msg__text { margin: 0; }
+.fx-msg--ok { background: var(--fx-ok-bg); border-color: var(--fx-ok); color: var(--fx-ok); }
+.fx-msg--warn { background: var(--fx-warn-bg); border-color: var(--fx-warn); color: var(--fx-warn); }
+.fx-msg--error { background: var(--fx-err-bg); border-color: var(--fx-err); color: var(--fx-err); }
+.fx-checks { margin: 8px 0 0; padding: 0; list-style: none; font-size: 0.86rem; }
+.fx-check { position: relative; margin: 3px 0; padding-left: 20px; }
+.fx-check::before { position: absolute; left: 0; top: 0; content: "\2022"; }
+.fx-check--ok::before { content: "\2713"; font-weight: 700; }
+.fx-check--bad::before { content: "\2717"; font-weight: 700; }
+
+/* ----- estado ----- */
+.fx-status { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 14px 0 0; }
+.fx-status dt { color: var(--fx-muted); font-size: 0.86rem; }
+.fx-status dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.fx-status__warn { color: var(--fx-warn); }
+.fx-status__err { color: var(--fx-err); }
+
+/* ----- conflictos ----- */
+.fx-conflicts:empty { display: none; }
+.fx-conflict {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--fx-warn-bg);
+  border: 1px solid var(--fx-warn);
+  border-radius: 6px;
+}
+.fx-conflict__title { font-weight: 650; color: var(--fx-warn); }
+.fx-conflict__text { margin: 4px 0 0; color: var(--fx-fg); font-size: 0.88rem; }
+
+/* ----- instrucciones plegables ----- */
+.fx-details {
+  margin: 0 0 14px;
+  background: var(--fx-surface);
+  border: 1px solid var(--fx-border);
+  border-radius: var(--fx-radius);
+}
+.fx-details__summary { padding: 12px 16px; font-weight: 650; cursor: pointer; }
+.fx-details__body { padding: 0 16px 14px; }
+.fx-steps { margin: 8px 0; padding-left: 22px; }
+.fx-steps li { margin: 5px 0; }
+.fx-details code { padding: 1px 5px; background: var(--fx-surface-2); border-radius: 4px; font-size: 0.9em; }
+
+/* ----- campo de archivo oculto (se abre desde el botón) ----- */
+.fx-file { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); border: 0; white-space: nowrap; }
+
+@media (max-width: 560px) {
+  .fx-grid { grid-template-columns: 1fr; }
+  .fx-actions .fx-btn { flex: 1 1 100%; }
+  .fx-status { grid-template-columns: 1fr; gap: 0; }
+  .fx-status dd { margin-bottom: 8px; }
+  .fx-card { padding: 12px; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fx-btn { transition: border-color 0.12s, filter 0.12s; }
+}

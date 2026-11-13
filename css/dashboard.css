@@ -1,0 +1,234 @@
+/* dashboard.css — pantalla «Resumen». Todas las clases llevan el prefijo db-.
+ * Reutiliza variables y clases de app.css (--pri --ink --muted --line --pos --neg --card --soft, .card .btn .chip .list .seg .badge .banner).
+ *
+ * Paleta del gráfico (series categóricas 1-3, orden fijo, validadas con scripts/validate_palette de dataviz):
+ *   claro  #00909b #eb6834 #6250d6 sobre #ffffff   -> banda de luminosidad, croma, CVD (ΔE >= 9) y contraste >= 3:1: PASS
+ *   oscuro #2aa5ac #d95926 #9085e9 sobre #142427   -> idem: PASS
+ * El texto nunca usa el color de la serie; el color solo lo llevan las marcas (línea, punto, llave de leyenda).
+ */
+.db {
+  --db-s1: #00909b; --db-s2: #eb6834; --db-s3: #6250d6;
+  --db-axis: #8aa0a3;
+  --db-hero-bg: linear-gradient(135deg, #0f5257 0%, #167078 100%);
+  --db-hero-ink: #ffffff; --db-hero-muted: rgba(255, 255, 255, .86); --db-hero-chip: rgba(255, 255, 255, .18); --db-hero-track: rgba(255, 255, 255, .24); --db-hero-line: rgba(255, 255, 255, .22);
+  container-type: inline-size; container-name: db;
+  display: grid; gap: 12px; max-width: 1180px; margin-inline: auto; min-width: 0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .db {
+    --db-s1: #2aa5ac; --db-s2: #d95926; --db-s3: #9085e9; --db-axis: #5d7a7e;
+    --db-hero-bg: linear-gradient(135deg, #16575c 0%, #1b6a6f 100%);
+    --db-hero-ink: #eef8f8; --db-hero-muted: rgba(238, 248, 248, .86); --db-hero-chip: rgba(255, 255, 255, .14); --db-hero-track: rgba(255, 255, 255, .2); --db-hero-line: rgba(255, 255, 255, .18);
+  }
+}
+:root[data-theme="dark"] .db {
+  --db-s1: #2aa5ac; --db-s2: #d95926; --db-s3: #9085e9; --db-axis: #5d7a7e;
+  --db-hero-bg: linear-gradient(135deg, #16575c 0%, #1b6a6f 100%);
+  --db-hero-ink: #eef8f8; --db-hero-muted: rgba(238, 248, 248, .86); --db-hero-chip: rgba(255, 255, 255, .14); --db-hero-track: rgba(255, 255, 255, .2); --db-hero-line: rgba(255, 255, 255, .18);
+}
+.db *, .db *::before, .db *::after { box-sizing: border-box; }
+.db .card + .card { margin-top: 0; }
+.db h2 { margin: 0; }
+.db-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
+.db .strong { font-weight: 700; }
+.db .num { font-variant-numeric: tabular-nums; }
+
+/* ---------- fecha y avisos ---------- */
+.db-date { margin: 2px 2px 0; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; color: var(--muted); font-size: 13.5px; font-weight: 550; }
+.db-date:empty { display: none; }
+.db-banners { display: grid; gap: 8px; }
+.db-banners:empty { display: none; }
+.db-banner { display: flex; align-items: center; gap: 12px; margin: 0; }
+.db-banner .grow { flex: 1; min-width: 0; }
+.db-banner .btn { flex: none; min-height: 36px; padding: 6px 12px; }
+.db-banner.err { background: #fde8e6; color: #7a1812; }
+.db-banner.ok { background: #e2f4ea; color: #0b4a31; }
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .db-banner.err { background: #3b1b19; color: #ffc9c4; }
+  :root:where(:not([data-theme="light"])) .db-banner.ok { background: #14352a; color: #b8ecd4; }
+  :root:where(:not([data-theme="light"])) .db-banner .btn { background: rgba(255, 255, 255, .08); color: inherit; border-color: rgba(255, 255, 255, .2); }
+}
+:root[data-theme="dark"] .db-banner.err { background: #3b1b19; color: #ffc9c4; }
+:root[data-theme="dark"] .db-banner.ok { background: #14352a; color: #b8ecd4; }
+:root[data-theme="dark"] .db-banner .btn { background: rgba(255, 255, 255, .08); color: inherit; border-color: rgba(255, 255, 255, .2); }
+
+/* ---------- disposición ---------- */
+.db-top, .db-main { display: grid; gap: 12px; min-width: 0; }
+.db-top > *, .db-main > * { min-width: 0; }                                              /* evita que una pista de la cuadrícula crezca con su contenido */
+
+/* ---------- tarjeta destacada ---------- */
+.db-hero { background: var(--db-hero-bg); color: var(--db-hero-ink); border-radius: var(--radius); padding: 18px 18px 16px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
+.db-hero::after { content: ""; position: absolute; right: -60px; top: -70px; width: 200px; height: 200px; border-radius: 50%; background: radial-gradient(closest-side, rgba(255, 255, 255, .13), rgba(255, 255, 255, 0)); pointer-events: none; }
+.db-hero > * { position: relative; z-index: 1; }
+.db-hero-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.db-hero-label { font-size: 14.5px; font-weight: 650; color: var(--db-hero-muted); }
+.db-hero-month { font-size: 12.5px; font-weight: 650; padding: 3px 10px; border-radius: 99px; background: var(--db-hero-chip); }
+.db-hero-value { margin-top: 6px; font-size: 3rem; line-height: 1.05; font-weight: 750; letter-spacing: -.025em; overflow-wrap: anywhere; }
+.db-hero-value.long { font-size: 2.5rem; }
+.db-hero-value.none { opacity: .6; }
+.db-hero-sub { margin: 2px 0 0; font-size: 13px; color: var(--db-hero-muted); }
+.db-hero-delta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 12px; }
+.db-hero-vs { font-size: 13px; color: var(--db-hero-muted); }
+.db-hero-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--db-hero-line); }
+.db-hero-split > div { min-width: 0; }
+.db-hero-split .k { display: block; font-size: 12.5px; color: var(--db-hero-muted); }
+.db-hero-split .v { display: block; font-size: 1.1rem; font-weight: 700; margin-top: 1px; overflow-wrap: anywhere; }
+.db-meter { height: 8px; border-radius: 99px; background: var(--db-hero-track); overflow: hidden; margin-top: 12px; }
+.db-meter > i { display: block; height: 100%; border-radius: 99px; background: var(--db-hero-ink); min-width: 4px; }
+.db-hero-note { margin: 8px 0 0; font-size: 12.5px; line-height: 1.4; color: var(--db-hero-muted); }
+
+/* ---------- pastillas de variación (flecha + signo: nunca solo color) ---------- */
+.db-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 99px; font-size: 12.5px; font-weight: 650; line-height: 1.35; white-space: nowrap; background: var(--soft); color: var(--muted); }
+.db-chip.pos { color: var(--pos); background: color-mix(in srgb, var(--pos) 13%, var(--card)); }
+.db-chip.neg { color: var(--neg); background: color-mix(in srgb, var(--neg) 12%, var(--card)); }
+.db-chip.flat { color: var(--muted); }
+.db-chip.on-hero { color: var(--db-hero-ink); background: var(--db-hero-chip); }
+.db-chip-pct { font-weight: 550; opacity: .85; }
+.db-ico { flex: none; }
+
+/* ---------- accesos rápidos ---------- */
+.db-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.db-actions .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; min-width: 0; padding-inline: 10px; font-size: 14.5px; white-space: nowrap; }
+.db-actions .btn span { overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- bancos ---------- */
+.db-sec-head, .db-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.db-sec-head { margin: 2px 2px 8px; align-items: baseline; flex-wrap: wrap; }
+.db-sec-head h2, .db-card-head h2 { font-size: 16px; }
+.db-card-head { margin-bottom: 10px; flex-wrap: wrap; }
+.db-sec-note { font-size: 12.5px; color: var(--muted); }
+.db-banks-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.db-bank { display: grid; gap: 4px; align-content: start; position: relative; min-width: 0; padding: 14px 14px 12px; text-decoration: none; color: inherit; transition: transform .12s ease, box-shadow .12s ease; -webkit-tap-highlight-color: transparent; }
+.db-bank:hover { transform: translateY(-1px); box-shadow: 0 2px 4px rgba(10, 40, 44, .08), 0 10px 24px rgba(15, 82, 87, .12); }
+.db-bank:active { transform: none; }
+.db-bank:focus-visible, .db-fig:focus-visible, .db-amt:focus-visible { outline: 2px solid var(--pri); outline-offset: 2px; }
+.db-bank-name { padding-right: 18px; font-size: 13.5px; font-weight: 650; line-height: 1.3; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.db-bank-value { font-size: 1.2rem; font-size: clamp(1.05rem, 6.4cqi, 1.35rem); font-weight: 750; letter-spacing: -.01em; line-height: 1.2; overflow-wrap: anywhere; }
+.db-bank-value.none { color: var(--muted); }
+.db-bank-delta { display: flex; align-items: center; min-height: 24px; }
+.db-bank-note { font-size: 12px; color: var(--muted); }
+.db-share { display: block; height: 6px; border-radius: 99px; margin-top: 6px; overflow: hidden; background: color-mix(in srgb, var(--pri) 14%, var(--card)); }
+.db-share > i { display: block; height: 100%; border-radius: 99px; background: var(--pri); }
+.db-bank-go { position: absolute; right: 10px; top: 13px; color: var(--muted); display: flex; }
+.db-bank.alt { background: transparent; box-shadow: none; border: 1px dashed var(--line); }
+.db-bank.alt .db-bank-value { font-size: clamp(1rem, 5.6cqi, 1.2rem); }
+
+/* ---------- provisiones ---------- */
+.db-card-total { font-size: 1.15rem; font-weight: 750; }
+.db-card-total.none { color: var(--muted); }
+.db-prov-list li { align-items: center; }
+.db-prov-row .s { display: flex; gap: 6px; align-items: center; }
+.db-amt { appearance: none; display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 10px; border-radius: 10px; border: 1px solid transparent; background: var(--soft); color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; cursor: pointer; }
+.db-amt:hover { border-color: var(--line); }
+.db-amt.none { color: var(--muted); font-weight: 550; }
+.db-amt.bad { color: var(--neg); }
+.db-amt svg { opacity: .55; }
+.db-fx { font-size: 11px; padding: 0 7px; }
+.db-prov-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-top: 10px; }
+.db-prov-foot .btn { display: inline-flex; align-items: center; gap: 6px; }
+.db-prov-prev { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.db-edit-wrap { flex: 1; min-width: 0; }
+.db-edit-wrap .t { font-weight: 600; }
+.db-edit, .db-add { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; width: 100%; }
+.db-add { margin: 0; }
+.db-edit input, .db-add input { flex: 1 1 140px; min-width: 0; padding: 10px 12px; min-height: 42px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--ink); }
+.db-edit input:focus, .db-add input:focus { outline: 2px solid var(--pri); outline-offset: -1px; }
+.db-edit .btn, .db-add .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.db-err { margin: 6px 0 0; color: var(--neg); width: 100%; }
+.db-prov-row.editing { display: block; }
+
+/* ---------- gráfico ---------- */
+.db-chart { min-width: 0; }
+.db-chart-holder { margin-top: 8px; }
+.db-stats { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
+.db-stats:empty { display: none; }
+.db-stat .k { display: block; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.db-stat .v { display: block; font-size: 1.55rem; line-height: 1.15; font-weight: 750; letter-spacing: -.015em; }
+.db-stat-chips { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 3px; }
+.db-stat-parts { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 1px 14px; margin-top: 2px; font-size: 12.5px; color: var(--muted); }
+.db-stat-parts .v { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.db-chip-sfx { font-weight: 550; opacity: .85; }
+.db-fig { margin: 0; border-radius: 12px; }
+.db-plot { position: relative; touch-action: pan-y; }
+.db-svg { display: block; width: 100%; height: auto; overflow: visible; user-select: none; -webkit-user-select: none; }
+.db-gl { stroke: var(--line); stroke-width: 1; shape-rendering: crispEdges; }
+.db-axis { stroke: var(--db-axis); stroke-width: 1; shape-rendering: crispEdges; }
+.db-tx { fill: var(--muted); font-size: 11px; font-family: inherit; }
+.db-yr { font-weight: 650; font-size: 11.5px; }
+.db-line { fill: none; stroke-width: 2; }
+.db-line.s1 { stroke: var(--db-s1); } .db-line.s2 { stroke: var(--db-s2); } .db-line.s3 { stroke: var(--db-s3); }
+.db-area { stroke: none; fill-opacity: .1; }
+.db-area.s1 { fill: var(--db-s1); } .db-area.s2 { fill: var(--db-s2); } .db-area.s3 { fill: var(--db-s3); }
+.db-dot { stroke: var(--card); stroke-width: 2; }
+.db-dot.s1 { fill: var(--db-s1); } .db-dot.s2 { fill: var(--db-s2); } .db-dot.s3 { fill: var(--db-s3); }
+.db-cross { stroke: var(--db-axis); stroke-width: 1; shape-rendering: crispEdges; }
+.db-dl { fill: var(--ink); font-size: 11.5px; font-weight: 650; font-family: inherit; paint-order: stroke; stroke: var(--card); stroke-width: 3px; stroke-linejoin: round; }
+.db-hit { cursor: crosshair; }
+.db-tip { position: absolute; z-index: 3; pointer-events: none; min-width: 150px; max-width: 230px; padding: 10px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 12.5px; line-height: 1.35; }
+.db-tip[hidden] { display: none; }
+.db-tip-h { color: var(--muted); font-weight: 650; }
+.db-tip-v { font-size: 1.15rem; font-weight: 750; line-height: 1.25; }
+.db-tip-v.sm { font-size: .95rem; }
+.db-tip-d { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 6px; margin-top: 3px; }
+.db-tip-sub { color: var(--muted); }
+.db-tip-parts { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); display: grid; gap: 2px; color: var(--muted); }
+.db-tip-parts > div { display: flex; justify-content: space-between; gap: 14px; }
+.db-tip-r { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.db-keyline { display: inline-block; flex: none; width: 16px; height: 3px; border-radius: 3px; }
+.db-keyline.s1 { background: var(--db-s1); } .db-keyline.s2 { background: var(--db-s2); } .db-keyline.s3 { background: var(--db-s3); }
+.db-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 4px; font-size: 13px; }
+.db-legend[hidden] { display: none; }
+.db-key { display: inline-flex; align-items: center; gap: 7px; }
+.db-hint { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); }
+.db-hint .touch { display: none; }
+@media (hover: none) { .db-hint .touch { display: inline; } .db-hint .mouse { display: none; } }
+.db-details { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.db-details summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--pri); padding: 6px 0; }
+.db-table { font-size: 13px; }
+.db-table th[scope="row"] { font-weight: 600; white-space: nowrap; }
+.db-table td.r, .db-table th.r { text-align: right; }
+.db-table td.strong { font-weight: 700; }
+.db-recent .chips { margin-bottom: 4px; }
+.db-recent-list .num { font-weight: 700; }
+
+/* ---------- disposición por ancho del propio contenedor (no de la ventana) ---------- */
+@container db (max-width: 330px) {
+  .db-actions .btn:not(.primary) .db-ico { display: none; }   /* pantallas muy angostas: el texto completo vale más que el ícono (el «+» de Movimiento se conserva) */
+}
+@container db (min-width: 540px) and (max-width: 739px) {
+  .db-actions .btn:not(.primary) .db-ico { display: none; }   /* cuatro botones en fila: igual, el texto primero */
+}
+@container db (min-width: 540px) {
+  .db-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .db-banks-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .db-bank-value { font-size: clamp(1rem, 3.3cqi, 1.3rem); }       /* 4 tarjetas en fila: el importe debe caber en ~110 px */
+}
+@container db (min-width: 700px) {
+  .db-recent-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
+}
+@container db (min-width: 740px) {
+  .db-top { grid-template-columns: minmax(300px, 5fr) minmax(0, 7fr); grid-template-areas: "hero banks" "actions actions"; }
+  .db-top.solo { grid-template-columns: minmax(0, 1fr); grid-template-areas: "hero" "actions"; }
+  .db-hero { grid-area: hero; } .db-banks { grid-area: banks; } .db-actions { grid-area: actions; }
+  .db-banks-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .db-bank-value { font-size: 1.35rem; }
+  .db-hero-value { font-size: 3.4rem; }
+  .db-hero-value.long { font-size: 2.8rem; }
+  .db-hero { padding: 22px 22px 18px; }
+}
+@container db (min-width: 940px) {
+  .db-main { grid-template-columns: minmax(0, 7fr) minmax(300px, 4fr); grid-template-areas: "chart prov" "recent recent"; align-items: start; }
+  .db-chart { grid-area: chart; } .db-prov { grid-area: prov; } .db-recent { grid-area: recent; }
+}
+
+/* ---------- impresión y modo de alto contraste: la identidad no depende del color ---------- */
+@media (forced-colors: active), print {
+  .db-line { stroke: CanvasText; }
+  .db-line.s2 { stroke-dasharray: 7 4; } .db-line.s3 { stroke-dasharray: 2 4; }
+  .db-keyline { background: CanvasText; }
+  .db-keyline.s2 { background: repeating-linear-gradient(90deg, CanvasText 0 7px, transparent 7px 11px); }
+  .db-keyline.s3 { background: repeating-linear-gradient(90deg, CanvasText 0 2px, transparent 2px 6px); }
+  .db-dot { fill: CanvasText; stroke: Canvas; }
+  .db-hero { border: 1px solid CanvasText; }
+}
+@media (prefers-reduced-motion: reduce) { .db-bank { transition: none; } }

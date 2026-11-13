@@ -1,0 +1,78 @@
+/* pwa.css — avisos de actualización, instalación y conexión (js/pwa.js). Todas las clases llevan el prefijo fx-pwa-.
+ * Los avisos flotan justo debajo de la cabecera (variables --top-h y --safe-t de app.css, con valores por defecto) para no
+ * chocar con los toasts de abajo ni con la barra de pestañas. Si esta hoja no está enlazada en el HTML, pwa.js la carga sola. */
+.fx-pwa-host {
+  --fx-pwa-bg: #0f5257;
+  --fx-pwa-fg: #ffffff;
+  --fx-pwa-accent: #8ff0d6;
+  position: fixed;
+  z-index: 90;
+  left: 0;
+  right: 0;
+  top: calc(var(--top-h, 54px) + var(--safe-t, env(safe-area-inset-top, 0px)) + 8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  pointer-events: none;            /* el contenedor no tapa la app; solo los avisos reciben clics */
+}
+
+.fx-pwa-banner {
+  pointer-events: auto;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  width: 100%;
+  max-width: 560px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--fx-pwa-bg);
+  color: var(--fx-pwa-fg);
+  box-shadow: 0 8px 24px rgba(5, 30, 33, .28), 0 1px 3px rgba(5, 30, 33, .25);
+  font: 500 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  animation: fx-pwa-in .22s ease-out;
+}
+.fx-pwa-banner--ok { --fx-pwa-bg: #0f6b49; }
+.fx-pwa-banner--warn { --fx-pwa-bg: #7a5200; }
+
+.fx-pwa-text { flex: 1 1 220px; margin: 0; }
+.fx-pwa-text strong { font-weight: 700; color: var(--fx-pwa-accent); }
+.fx-pwa-icon { display: inline-block; vertical-align: -3px; margin: 0 2px; }
+
+.fx-pwa-actions { display: flex; gap: 8px; margin-left: auto; }
+.fx-pwa-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 10px;
+  min-height: 38px;
+  padding: 0 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.fx-pwa-btn--primary { background: #ffffff; color: #0f5257; }
+.fx-pwa-btn--primary:hover { background: #e6f6f4; }
+.fx-pwa-btn--ghost { background: transparent; color: var(--fx-pwa-fg); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .45); }
+.fx-pwa-btn--ghost:hover { background: rgba(255, 255, 255, .12); }
+.fx-pwa-btn:focus-visible { outline: 3px solid var(--fx-pwa-accent); outline-offset: 2px; }
+.fx-pwa-btn:disabled { opacity: .7; cursor: default; }
+
+@keyframes fx-pwa-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (pointer: coarse) { .fx-pwa-btn { min-height: 44px; } }
+@media (max-width: 480px) {
+  .fx-pwa-actions { width: 100%; }
+  .fx-pwa-btn { flex: 1; }
+}
+@media (prefers-color-scheme: dark) {
+  .fx-pwa-host { --fx-pwa-bg: #14474b; }
+  .fx-pwa-banner { box-shadow: 0 8px 24px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(255, 255, 255, .1); }
+}
+@media (prefers-reduced-motion: reduce) { .fx-pwa-banner { animation: none; } }
+@media print { .fx-pwa-host { display: none; } }

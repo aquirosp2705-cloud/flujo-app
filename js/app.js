@@ -50,12 +50,36 @@ async function tryLocalData() {
   } catch (e) { return null; }
 }
 
+/** Enlace de conexión «…/#conectar=CÓDIGO»: lo saca de la URL (barra de direcciones e historial: replaceState no añade entradas
+ *  ni dispara «hashchange») y devuelve el hash original, o null si la URL no traía uno. El código nunca va en «?…». */
+function stripConnectHash() {
+  const h = location.hash;
+  if (!/^#conectar=/.test(h)) return null;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* sin historial: no hay más que hacer */ }
+  return h;
+}
+const earlyConnectHash = stripConnectHash();     // en cuanto se evalúa este módulo: antes de cargar nada más
+
+/** Guarda en state.pairingCode el código que llegó por enlace hasta que la pantalla de «Ya tengo un código» lo recoja. Devuelve el código o null. */
+function takePairingFromUrl(hash) {
+  const h = hash || stripConnectHash();
+  if (!h) return null;
+  const P = state.mods.pairing;
+  let code = null;
+  try { code = P && typeof P.codeFromHash === 'function' ? P.codeFromHash(h) : null; } catch (e) { code = null; }
+  if (code) state.pairingCode = code;
+  return code;
+}
+/** Entrega (una sola vez) el código que llegó por enlace. */
+function takePendingPairing() { const c = state.pairingCode || null; state.pairingCode = null; return c; }
+
 async function boot() {
   applyTheme();
   setBoot('Cargando módulos…', 5);
-  const names = ['store', 'sync-github', 'settings-ui', 'ledger', 'dashboard', 'quick', 'export', 'pwa'];
+  const names = ['store', 'sync-github', 'settings-ui', 'pairing', 'ledger', 'dashboard', 'quick', 'export', 'pwa'];
   const mods = await Promise.all(names.map((n) => optional('./' + n + '.js')));
   names.forEach((n, i) => { state.mods[n] = mods[i]; });
+  takePairingFromUrl(earlyConnectHash);      // el código que traía la URL al abrir (ya quitado de la barra de direcciones)
   if (state.mods.pwa && state.mods.pwa.initPwa) {
     // avisos de «Instalar la app» y «Hay una versión nueva — Actualizar»; antes de recargar se guardan los cambios pendientes
     try { state.mods.pwa.initPwa({ offlineNotice: false, beforeReload: async () => { if (state.saver) await state.saver.flush(); } }); } catch (e) { console.warn(e); }
@@ -110,11 +134,25 @@ function showOnboarding(resolve) {
   $('#boot-msg').textContent = 'Primera vez en este dispositivo: trae tus datos.';
   $('.bar', $('#boot')).hidden = true;
   const extra = $('#boot-extra'); extra.innerHTML = '';
-  const finish = async (bundle) => { if (state.store) { try { await state.store.replaceAll(bundle); } catch (e) { console.warn(e); } } extra.innerHTML = ''; $('.bar', $('#boot')).hidden = false; resolve(bundle); };
+  let joinUi = null;
+  // si pegan un enlace «#conectar=…» con esta pantalla ya abierta, el código se coloca solo en el bloque «Ya tengo un código»
+  const onHash = () => { if (takePairingFromUrl() && joinUi && joinUi.setPairingCode) joinUi.setPairingCode(takePendingPairing()); };
+  window.addEventListener('hashchange', onHash);
+  const finish = async (bundle) => {
+    if (state.store) { try { await state.store.replaceAll(bundle); } catch (e) { console.warn(e); } }
+    window.removeEventListener('hashchange', onHash);
+    try { if (joinUi) joinUi.destroy(); } catch (e) { /* ya no se ve: solo se suelta lo escrito */ }
+    extra.innerHTML = ''; $('.bar', $('#boot')).hidden = false; resolve(bundle);
+  };
+  const S = state.mods['sync-github'], U = state.mods['settings-ui'];
+  const canSync = !!(S && U && state.store);
   const gh = el('div', { class: 'card', style: { textAlign: 'left', marginTop: '14px' } });
-  extra.append(
-    el('div', { class: 'row', style: { justifyContent: 'center', marginTop: '12px' } },
-      el('button', { class: 'btn primary', text: 'Traer desde GitHub', onclick: () => { gh.hidden = !gh.hidden; } }),
+  const joinHost = el('div', { style: { textAlign: 'left', marginTop: '14px' } });     // «Ya tengo un código de conexión»: la opción principal
+  extra.append(...[
+    canSync ? joinHost : null,
+    canSync ? el('p', { class: 'muted small', style: { margin: '18px 0 0' }, text: '¿No tienes un código? Hay otras formas de traer tus datos (con más pasos):' }) : null,
+    el('div', { class: 'row', style: { justifyContent: 'center', marginTop: canSync ? '10px' : '12px' } },
+      el('button', { class: canSync ? 'btn' : 'btn primary', text: 'Traer desde GitHub', onclick: () => { gh.hidden = !gh.hidden; } }),
       (() => {
         const f = el('input', { type: 'file', accept: '.json,application/json', hidden: true });
         f.addEventListener('change', async () => {
@@ -127,13 +165,14 @@ function showOnboarding(resolve) {
         });
         return el('span', {}, f, el('button', { class: 'btn', text: 'Cargar un respaldo (.json)', onclick: () => f.click() }));
       })()),
-    gh);
+    gh].filter(Boolean));
   gh.hidden = true;
-  const S = state.mods['sync-github'], U = state.mods['settings-ui'];
-  if (S && U && state.store) {
+  if (canSync) {
     if (!state.sync) state.sync = new S.GithubSync(state.store, {});
     applyUrlConfig();
-    U.mountSyncSettings(gh, { store: state.store, sync: state.sync, engine: null, onBundleReplaced: (b) => finish(b) });
+    const common = { store: state.store, sync: state.sync, onBundleReplaced: (b) => finish(b) };
+    if (typeof U.mountPairingJoin === 'function') joinUi = U.mountPairingJoin(joinHost, { ...common, code: takePendingPairing() });
+    U.mountSyncSettings(gh, { ...common, engine: null, pairing: false });
   } else gh.append(el('p', { class: 'muted', text: 'La sincronización con GitHub no está disponible en esta versión.' }));
 }
 
@@ -154,7 +193,9 @@ async function startWithBundle(bundle) {
   if (S && state.store && !state.sync) { try { state.sync = new S.GithubSync(state.store, {}); } catch (e) { console.warn(e); } }
   $('#boot').remove(); $('#app').hidden = false;
   $('#side-ver').textContent = 'Versión ' + VERSION;
-  window.addEventListener('hashchange', route);
+  // llegó un enlace de conexión a un dispositivo que ya tiene datos: se abre Ajustes (donde está el bloque de pegar el código)
+  if (state.pairingCode) { try { history.replaceState(null, '', location.pathname + location.search + '#/ajustes'); } catch (e) { /* */ } }
+  window.addEventListener('hashchange', onHashChange);
   window.addEventListener('online', () => { state.online = true; updatePill(); autoSync(); });
   window.addEventListener('offline', () => { state.online = false; updatePill(); });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') autoSync(); });
@@ -265,6 +306,11 @@ function parseHash() {
   const h = location.hash.replace(/^#\/?/, ''); const [path, qs] = h.split('?'); const parts = path.split('/');
   return { name: parts[0] || 'resumen', arg: parts.slice(1).join('/') || null, q: new URLSearchParams(qs || '') };
 }
+/** Cambio de «#»: un enlace «#conectar=…» NO es una ruta; se quita de la URL y se lleva el código a Ajustes. */
+function onHashChange() {
+  if (takePairingFromUrl()) { ctx.navigate('ajustes'); return; }     // navigate() cambia el hash y vuelve a entrar aquí con la ruta normal
+  route();
+}
 let routeToken = 0;
 async function route() {
   if (!state.engine) return;
@@ -289,44 +335,71 @@ async function route() {
 }
 
 /* ------------------------------------------------------------------ pantallas */
+/** Hojas donde se anota un movimiento: las cuentas bancarias del módulo de movimientos y las dos tarjetas (formularios de captura). */
+function movTargets() {
+  const L = state.mods.ledger, Q = state.mods.quick, out = [];
+  if (L && L.LEDGERS) for (const d of Object.values(L.LEDGERS)) out.push({ id: d.id, kind: 'ledger', label: d.title || d.short });
+  if (Q && Q.mountForm && Q.SHEETS) {
+    for (const fid of ['tcpich', 'produb']) {
+      const sh = state.engine.sheet(Q.SHEETS[fid]);
+      if (sh) out.push({ id: fid, kind: 'form', label: catalog.infoFor(sh).short });
+    }
+  }
+  return out;
+}
+
 const SCREENS = {
   async resumen(host) {
     const D = state.mods.dashboard;
     if (D && D.mount) { const wrap = el('div', { class: 'screen' }); host.append(wrap); return D.mount(wrap, ctx); }
     return openGridIn(host, 'CONSOL', new URLSearchParams());
   },
-  async mov(host, arg) {
+  async mov(host, arg, q) {
     const L = state.mods.ledger, Q = state.mods.quick;
     const wrap = el('div', { class: 'screen mov-screen' }); host.append(wrap);
     if (!L || !L.mount) {
       wrap.append(el('div', { class: 'card' }, el('h2', { text: 'Movimientos' }), el('p', { class: 'muted', text: 'La captura rápida de movimientos aún no está disponible en esta versión. Usa la pestaña Hojas.' })));
       return {};
     }
-    // Lista desplegable con las hojas donde se anota el movimiento: cuentas bancarias y tarjetas
-    const targets = Object.values(L.LEDGERS || {}).map((d) => ({ id: d.id, kind: 'ledger', label: d.title || d.short }));
-    if (Q && Q.mountForm && Q.SHEETS) {
-      for (const fid of ['tcpich', 'produb']) {
-        const sh = state.engine.sheet(Q.SHEETS[fid]);
-        if (sh) targets.push({ id: fid, kind: 'form', label: catalog.infoFor(sh).short });
-      }
-    }
+    // Hojas donde se anota el movimiento: cuentas bancarias y tarjetas (lista desplegable de arriba y lista que sale al pulsar «+»)
+    const targets = movTargets();
     let saved = null; try { saved = localStorage.getItem('fx-mov-target'); } catch (e) { /* */ }
     let current = targets.find((t) => t.id === arg) || targets.find((t) => t.id === saved) || targets[0];
-    const select = el('select', { id: 'mov-target', 'aria-label': 'Hoja donde se anota el movimiento' });
+    const select = el('select', { id: 'mov-target', 'aria-label': 'Hoja que estás viendo' });
     for (const t of targets) select.append(el('option', { value: t.id, text: t.label, selected: t.id === current.id }));
-    wrap.append(el('div', { class: 'field mov-pick' }, el('label', { for: 'mov-target', text: 'Hoja donde se anota el movimiento' }), select));
+    wrap.append(el('div', { class: 'field mov-pick' }, el('label', { for: 'mov-target', text: 'Hoja que estás viendo' }), select));
     const body = el('div', { class: 'mov-body' }); wrap.append(body);
     let child = null;
+    /** «+ Movimiento»: primero se elige la hoja donde se anota (la que se está viendo sale marcada). */
+    const chooseTarget = () => new Promise((resolve) => {
+      let modal = null, done = false;
+      const finish = (t) => { if (done) return; done = true; if (modal) modal.close(); resolve(t || null); };
+      const rows = targets.map((t) => el('button', Object.assign({ type: 'button', class: 'mov-choice' + (t.id === current.id ? ' on' : ''), 'data-target': t.id, onclick: () => finish(t) }, t.id === current.id ? { autofocus: true } : {}),
+        el('span', { class: 'mov-choice-ic', 'aria-hidden': 'true', text: t.kind === 'ledger' ? '🏦' : '💳' }),
+        el('span', { class: 'mov-choice-t' }, el('b', { text: t.label }), el('small', { text: t.kind === 'ledger' ? 'Cuenta bancaria' : 'Tarjeta de crédito' })),
+        t.id === current.id ? el('span', { class: 'badge', text: 'la que estás viendo' }) : el('span', { class: 'muted', 'aria-hidden': 'true', html: '&rsaquo;' })));
+      modal = ctx.modal(el('div', { class: 'mov-choose' }, el('p', { class: 'muted', text: 'Elige la hoja donde quieres anotarlo.' }), ...rows),
+        { title: '¿En qué hoja anotas el movimiento?', onClose: () => finish(null) });
+    });
+    const addFlow = async () => {
+      const t = await chooseTarget();
+      if (!t) return;
+      if (t.id !== current.id) { select.value = t.id; show(t); }
+      if (child && child.add) child.add();                          // cuenta bancaria: abre «Nuevo movimiento»; tarjeta: su formulario ya está a la vista
+    };
     const show = (t) => {
       if (child && child.destroy) { try { child.destroy(); } catch (e) { console.warn(e); } }
       body.innerHTML = ''; current = t;
       try { localStorage.setItem('fx-mov-target', t.id); } catch (e) { /* */ }
       try { history.replaceState(null, '', '#/mov/' + t.id); } catch (e) { /* */ }
-      child = (t.kind === 'ledger' ? L.mount(body, ctx, { ledgerId: t.id }) : Q.mountForm(body, ctx, t.id)) || null;
+      child = (t.kind === 'ledger' ? L.mount(body, ctx, { ledgerId: t.id, onAdd: addFlow }) : Q.mountForm(body, ctx, t.id)) || null;
       if (wrap.isConnected) $('#title').textContent = TITLES.mov;
     };
     select.addEventListener('change', () => show(targets.find((t) => t.id === select.value)));
     show(current);
+    if (q && q.get('nuevo')) {                                         // #/mov?nuevo=1 → lista de hojas · #/mov/<hoja>?nuevo=1 → «Nuevo movimiento» de esa hoja
+      if (arg && current.id === arg) { if (child && child.add) child.add(); } else addFlow();
+    }
     return { destroy() { if (child && child.destroy) child.destroy(); }, refresh() { if (child && child.refresh) child.refresh(); } };
   },
   async reg(host, arg) {
@@ -336,11 +409,11 @@ const SCREENS = {
       $('#title').textContent = 'Registrar';
       return Q.mountForm(wrap, ctx, arg);
     }
-    wrap.append(el('div', { class: 'card' }, el('h2', { text: '¿Qué quieres registrar?' }),
-      el('ul', { class: 'list' }, el('li', { style: { cursor: 'pointer' }, onclick: () => ctx.navigate('mov') },
-        el('div', { class: 'grow' }, el('div', { class: 't', text: '🏦  Movimiento bancario' }), el('div', { class: 's', text: 'Depósito, retiro, pago o transferencia en tus cuentas' })),
-        el('span', { class: 'muted', html: '&rsaquo;' })))));
-    if (Q && Q.mountHub) { const hub = el('div', { style: { marginTop: '12px' } }); wrap.append(hub); return Q.mountHub(hub, ctx); }
+    const sheetRows = movTargets().map((t) => el('li', { style: { cursor: 'pointer' }, 'data-target': t.id, onclick: () => ctx.navigate('mov/' + t.id + '?nuevo=1') },
+      el('div', { class: 'grow' }, el('div', { class: 't', text: (t.kind === 'ledger' ? '🏦  ' : '💳  ') + t.label }), el('div', { class: 's', text: t.kind === 'ledger' ? 'Depósito, retiro, pago o transferencia' : 'Consumos y pagos de la tarjeta' })),
+      el('span', { class: 'muted', html: '&rsaquo;' })));
+    wrap.append(el('div', { class: 'card' }, el('h2', { text: '¿En qué hoja anotas el movimiento?' }), el('ul', { class: 'list mov-sheets' }, ...sheetRows)));
+    if (Q && Q.mountHub) { const hub = el('div', { style: { marginTop: '12px' } }); wrap.append(hub); return Q.mountHub(hub, ctx, { exclude: ['tcpich', 'produb'] }); }
     return {};
   },
   async hojas(host) {
@@ -434,9 +507,10 @@ function screenAjustes(host) {
   // sincronización
   const syncCard = el('div', { class: 'card' });
   const syncBox = el('div'); syncCard.append(syncBox);
+  let syncUi = null;
   if (S && U && state.store) {
     if (!state.sync) state.sync = new S.GithubSync(state.store, {});
-    U.mountSyncSettings(syncBox, { store: state.store, sync: state.sync, engine: eng, autosaver: state.saver, onBundleReplaced: () => { toast('Datos reemplazados. Recargando…', { type: 'ok' }); setTimeout(() => location.reload(), 800); } });
+    syncUi = U.mountSyncSettings(syncBox, { store: state.store, sync: state.sync, engine: eng, autosaver: state.saver, pairingCode: takePendingPairing(), onBundleReplaced: () => { toast('Datos reemplazados. Recargando…', { type: 'ok' }); setTimeout(() => location.reload(), 800); } });
   } else syncBox.append(el('p', { class: 'muted', text: 'El módulo de sincronización no está disponible.' }));
   wrap.append(syncCard);
 
@@ -481,7 +555,7 @@ function screenAjustes(host) {
   // acerca de
   wrap.append(el('div', { class: 'card' }, el('h2', { text: 'Acerca de' }),
     el('p', { class: 'small muted', html: 'Flujo reemplaza tu libro de Excel con una app que funciona en cualquier dispositivo. Motor de cálculo: HyperFormula (GPL-3.0). Formatos de número: SSF (Apache-2.0). Código de la app bajo GPL-3.0.' })));
-  return {};
+  return { destroy() { if (syncUi && syncUi.destroy) syncUi.destroy(); } };      // al salir de Ajustes se borra de memoria cualquier código/clave que estuviera a la vista
 }
 
 boot().catch((e) => {

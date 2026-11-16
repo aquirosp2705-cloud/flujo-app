@@ -819,7 +819,7 @@ export function mount(host, ctx, opts = {}) {
     const s = D.summary;
     const b = (cls, ic, text, onclick, extra = {}) => el('button', Object.assign({ class: 'btn ' + cls, type: 'button', onclick }, extra), icon(ic, 18), el('span', { text }));
     secActions.append(
-      b('primary', 'plus', 'Movimiento', () => ctx.navigate('mov'), { 'aria-label': 'Agregar movimiento' }),
+      b('primary', 'plus', 'Movimiento', () => ctx.navigate('mov?nuevo=1'), { 'aria-label': 'Agregar movimiento' }),
       b('', 'sheet', 'Ver hoja ' + (s.ok ? s.sheetName : 'CONSOL'), () => ctx.openSheet(SID)),
       b('', 'search', 'Buscar', () => ctx.navigate('buscar')),
       b('', 'lock', 'Cerrar mes', onCloseMonth, { disabled: !s.ok || s.empty, title: 'Copia «Mes actual» a «Mes anterior»' }));

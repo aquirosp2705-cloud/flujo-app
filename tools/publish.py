@@ -18,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 APP_ALLOW = ['index.html', 'manifest.webmanifest', 'sw.js', 'LICENSE', 'README.md', '.nojekyll']
 APP_DIRS = ['css', 'js', 'vendor', 'icons']
-APP_TOOLS = ['tools/convert.py', 'tools/publish.py']
+APP_TOOLS = ['tools/convert.py', 'tools/drop_sheets.py', 'tools/publish.py']
 SKIP_NAMES = {'__pycache__', '.DS_Store', 'Thumbs.db'}
 SAFE_EXAMPLES = {'0012345678', '1234567890', '0123456789', '1234567890123456'}   # números de ejemplo ficticios en comentarios
 

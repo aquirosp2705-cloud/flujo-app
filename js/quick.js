@@ -1,7 +1,7 @@
 /* quick.js — Capturas rápidas de Flujo: registros periódicos que NO son movimientos bancarios.
  *
- * Formularios: factura de luz, pensión del mes, pago del carro, renovación de pólizas, consumo de tarjeta
- * de crédito y tarjeta/cuenta de ahorros. Cada uno ofrece un API puro (sin interfaz) y testeable:
+ * Formularios: pago del carro, renovación de pólizas, consumo de tarjeta de crédito y tarjeta/cuenta de
+ * ahorros. Cada uno ofrece un API puro (sin interfaz) y testeable:
  *
  *   form.prepare(engine, {today})        -> {ok, nextRow, hints, warnings, ...}   fila de captura y sugerencias
  *   form.preview(engine, values, opts)   -> {ok, errors, warnings, checks, cells}  celdas calculadas, SIN escribir
@@ -26,7 +26,7 @@ import { el, money, dateText, monthText, dateInputValue, serialFromInput } from 
 import { todaySerial } from './format.js';
 
 /* ================================================================== identificadores de hojas */
-export const SHEETS = { luz: 's11', pension: 's16', carro: 's18', poliza: 's05', tcpich: 's03', produb: 's04' };
+export const SHEETS = { carro: 's18', poliza: 's05', tcpich: 's03', produb: 's04' };
 export function setSheetIds(map) { Object.assign(SHEETS, map || {}); }
 
 /* ================================================================== fechas */
@@ -353,244 +353,6 @@ function readAmount(values, key, label, errors, opt = {}) {
   return a;
 }
 const plural = (n, uno, varios) => (n === 1 ? uno : varios);
-
-/* ================================================================== FACTURA DE LUZ (una fila por mes) */
-/* Fila de captura = última fila con lectura (K) y consumo (C) + 1, dentro de la tabla mensual. Los verificadores
- * sueltos que hay debajo de la última fila (columnas de entrada) NO cuentan como datos. */
-const LUZ = {
-  first: 3, last: 64,                                                   // filas 4..65 (base 0: 3..64); desde la 66 hay borradores
-  copies: [[3, 3], [5, 9], [11, 12], [16, 17], [20, 21], [23, 23]],    // fórmulas que se copian de la fila anterior: D | F:J | L:M | Q:R | U:V | X
-  inputCols: [1, 2, 4, 10, 14, 15, 18, 19],                             // B C E K O P S T
-  formulaCols: [3, 5, 6, 7, 8, 9, 11, 12, 16, 17, 20, 21, 23],
-  styleCols: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23],
-  maxCol: 23,
-};
-const LUZ_OUT = [
-  ['G', 'kWh del período', 'int', true], ['L', 'kWh por día', 'num1', true], ['D', 'Impuestos', 'usd', true], ['F', 'Impuestos sobre consumo', 'pct0', true],
-  ['H', 'Costo por kWh sin impuestos', 'usd5', true], ['J', 'Costo por kWh con impuestos', 'usd5', true], ['Q', 'Costo por kWh pagado (neto)', 'usd5', true],
-  ['R', 'Subsidio sobre consumo', 'pct1', false], ['U', 'Ahorro solar', 'pct2', true], ['V', 'Consumo sin solar (kWh)', 'int', false],
-  ['I', 'Promedio acumulado de costo por kWh', 'usd5', false], ['M', 'Diferencia contra el consumo base', 'num1', false], ['X', 'Neto', 'usd', false],
-];
-function luzRowMonth(eng, sid, p) {
-  for (let j = p, k = 0; j >= LUZ.first; j--, k++) { const b = numAt(eng, sid, j, COL.B); if (b !== null && b > 20000) return addMonths(parseMonthValue(b), k); }
-  return null;
-}
-function luzPrepare(eng, opts) {
-  const sid = needSheet(eng, 'luz');
-  let p = -1;
-  for (let r = LUZ.last; r >= LUZ.first; r--) if (numAt(eng, sid, r, COL.K) !== null && numAt(eng, sid, r, COL.C) !== null) { p = r; break; }
-  if (p < 0) throw new QuickError('No se encontró la última factura registrada.');
-  const lastMonth = luzRowMonth(eng, sid, p);
-  if (lastMonth === null) throw new QuickError('No se pudo saber el mes de la última factura.');
-  const r = p + 1;
-  if (r > LUZ.last) throw new QuickError('La tabla mensual no tiene filas libres (llega hasta la fila ' + (LUZ.last + 1) + ').');
-  const nextMonth = addMonths(lastMonth, 1);
-  // meses sin factura: hasta el mes anterior al actual (la planilla del mes en curso aún no llega)
-  const count = Math.max(0, monthNum(opts.today) - 1 - monthNum(lastMonth));
-  const months = Array.from({ length: count }, (_, i) => addMonths(lastMonth, 1 + i));
-  const lf = eng.raw(sid, p, COL.L);
-  const dm = typeof lf === 'string' ? /\/\s*(\d+(?:\.\d+)?)\s*\)?\s*$/.exec(lf) : null;
-  const kwhs = []; for (let j = Math.max(LUZ.first, p - 5); j <= p; j++) { const g = numAt(eng, sid, j, COL.G); if (g !== null && g > 0) kwhs.push(g); }
-  const prev = { row: p, month: lastMonth, C: numAt(eng, sid, p, COL.C), E: numAt(eng, sid, p, COL.E), K: numAt(eng, sid, p, COL.K), O: numAt(eng, sid, p, COL.O), P: numAt(eng, sid, p, COL.P), T: numAt(eng, sid, p, COL.T), G: numAt(eng, sid, p, COL.G), days: dm ? +dm[1] : 30 };
-  const warnings = [];
-  const over = [...LUZ.inputCols, ...LUZ.formulaCols].filter((c) => filled(eng, sid, r, c)).map((c) => a1(r, c) + (isFormulaAt(eng, sid, r, c) ? ' (' + eng.raw(sid, r, c) + ')' : ''));
-  if (over.length) warnings.push({ code: 'overwrite', level: 'info', msg: 'La fila ' + (r + 1) + ' ya tiene contenido (' + over.join(', ') + '); se reemplazará.', cells: over });
-  const lacking = LUZ.formulaCols.filter((c) => !isFormulaAt(eng, sid, p, c)).map((c) => colLetter(c));
-  if (lacking.length) warnings.push({ code: 'formulas', level: 'warn', msg: 'La fila anterior no tiene fórmula en ' + lacking.join(', ') + '; la fila nueva quedará sin ellas.', cells: lacking });
-  const free = LUZ.last - r + 1;
-  if (free <= 3) warnings.push({ code: 'capacity', level: 'warn', msg: 'Quedan ' + free + ' ' + plural(free, 'fila libre', 'filas libres') + ' en la tabla mensual.' });
-  return {
-    ok: true, formId: 'luz', sid, lastRow: p, nextRow: r, month: nextMonth, prev, capacity: free,
-    missing: { count, months },
-    hints: { days: prev.days, typicalKwh: kwhs.length ? kwhs.reduce((a, b) => a + b, 0) / kwhs.length : null, prev },
-    warnings,
-  };
-}
-function luzValidate(eng, prep, v) {
-  const errors = [], warnings = [], checks = [], pz = {};
-  const m = parseMonthValue(v.month);
-  if (m === null) errors.push({ field: 'month', msg: 'Elige el mes de la factura.' });
-  else if (m <= prep.prev.month) errors.push({ field: 'month', msg: 'El mes debe ser posterior a ' + monthLabel(prep.prev.month) + ' (último registrado).' });
-  else if (m > prep.month) { const n = monthNum(m) - monthNum(prep.month); warnings.push({ code: 'skip', field: 'month', confirm: true, msg: 'Se saltan ' + n + ' ' + plural(n, 'mes', 'meses') + ' (desde ' + monthLabel(prep.month) + '): la tabla es mensual y sin huecos.' }); }
-  const C = readAmount(v, 'C', 'el consumo', errors, { positive: true });
-  const E = readAmount(v, 'E', 'el total de la planilla', errors, { positive: true });
-  const K = readAmount(v, 'K', 'la lectura del medidor', errors, { positive: true });
-  const O = readAmount(v, 'O', 'el subsidio', errors, { nonneg: true });
-  const P = readAmount(v, 'P', 'el valor de la factura', errors, { positive: true });
-  const T = readAmount(v, 'T', 'los kWh generados', errors, { nonneg: true });
-  const days = Number(String(v.days ?? '').trim());
-  if (String(v.days ?? '').trim() === '' || !Number.isInteger(days) || days < 1 || days > 100) errors.push({ field: 'days', msg: 'Escribe los días del período (un número entero, por ejemplo 30).' });
-  else if (days < 27 || days > 33) warnings.push({ code: 'days', field: 'days', msg: 'Los períodos suelen durar entre 28 y 33 días.' });
-  if (K && K.value <= prep.prev.K) errors.push({ field: 'K', msg: 'La lectura debe ser mayor que la anterior (' + prep.prev.K + ').' });
-  if (K && K.value > prep.prev.K) {
-    const g = K.value - prep.prev.K;
-    checks.push({ key: 'kwh', ok: true, text: 'Consumo del período: ' + Math.round(g).toLocaleString('en-US') + ' kWh' });
-    const typ = prep.hints.typicalKwh;
-    if (typ && (g > 3 * typ || g < typ / 3)) warnings.push({ code: 'kwh', field: 'K', msg: 'El consumo del período (' + Math.round(g) + ' kWh) es muy distinto del habitual (~' + Math.round(typ) + ' kWh). Revisa la lectura.' });
-  }
-  if (E && O && P) {
-    const diff = E.value - O.value - P.value;
-    const ok = Math.abs(diff) <= 0.5;
-    checks.push({ key: 'eop', ok, text: 'Total − subsidio = ' + money(E.value - O.value) + ' · valor de la factura ' + money(P.value) + (ok ? ' · coinciden' : ' · difieren en ' + money(Math.abs(diff))) });
-    if (!ok) warnings.push({ code: 'eop', field: 'P', confirm: true, msg: 'Total − subsidio (' + money(E.value - O.value) + ') no coincide con el valor de la factura (' + money(P.value) + '): difieren en ' + money(Math.abs(diff)) + '.' });
-  }
-  if (errors.length) return { errors, warnings, checks };
-  Object.assign(pz, { B: m, C, E, K, O, P, T, days, S: String(v.S || '').trim() || MESES[serialToYmd(m).m - 1] });
-  return { errors, warnings, checks, parsed: pz };
-}
-function luzPlan(eng, prep, pz) {
-  const sid = SHEETS.luz, r = prep.nextRow, p = prep.lastRow;
-  const writes = [
-    { r, c: COL.B, raw: pz.B }, { r, c: COL.C, raw: pz.C.raw }, { r, c: COL.E, raw: pz.E.raw }, { r, c: COL.K, raw: pz.K.raw },
-    { r, c: COL.O, raw: pz.O.raw }, { r, c: COL.P, raw: pz.P.raw }, { r, c: COL.S, raw: pz.S }, { r, c: COL.T, raw: pz.T.raw },
-    { r, c: COL.L, raw: '=+G' + (r + 1) + '/' + pz.days },                       // se copió con el divisor anterior: aquí van los días reales
-  ];
-  return {
-    sid, formId: 'luz', row: r, label: 'Factura de ' + monthLabel(pz.B),
-    copies: LUZ.copies.map(([c0, c1]) => ({ r0: p, c0, r1: p, c1, dr: r, dc: c0 })),
-    writes, styles: LUZ.styleCols.map((c) => ({ r, c, from: [p, c] })),
-    out: LUZ_OUT.map(([col, label, kind, primary]) => ({ r, c: COL[col], key: col, label, kind, primary })),
-  };
-}
-function luzSeed(eng, prep, plan) {
-  const out = [];
-  seedConst(eng, plan.sid, LUZ.first, prep.lastRow - 1, 0, LUZ.maxCol, out);
-  seedRaw(eng, plan.sid, prep.lastRow, 0, LUZ.maxCol, out);
-  return { cells: out, rows: plan.row + 2, cols: LUZ.maxCol + 1 };
-}
-function luzStatus(eng, opts) {
-  const prep = luzPrepare(eng, opts), n = prep.missing.count;
-  if (n === 0) return { level: 'ok', text: 'Al día', detail: 'Última factura: ' + monthLabel(prep.prev.month) };
-  const first = prep.missing.months[0], last = prep.missing.months[n - 1];
-  return { level: n >= 3 ? 'late' : 'warn', text: n === 1 ? 'Falta 1 factura de luz' : 'Faltan ' + n + ' facturas de luz', detail: n === 1 ? monthLabel(first) : monthLabel(first) + ' a ' + monthLabel(last) };
-}
-const luz = makeForm({
-  id: 'luz', key: 'luz', title: 'Factura de luz', icon: '💡',
-  desc: 'Registra la planilla del mes: consumo, total, lectura del medidor y subsidio.',
-  prepare: luzPrepare, validate: luzValidate, plan: luzPlan, seed: luzSeed, status: luzStatus,
-});
-
-/* ================================================================== PENSIÓN DEL MES (una fila por mes, sin plantilla) */
-/* Entradas: G año, H mes en texto minúscula, I monto. Se copian de la fila anterior las fórmulas J K L (M vacía) N O.
- * Fila de captura = última fila con contenido en G:I + 1. El cuadro es continuo: el mes nuevo debe ser el siguiente. */
-const PEN = { first: 69, G: 6, H: 7, I: 8, formulaFrom: 9, formulaTo: 14, rateRow: 68, rateCol: 10 };
-function penMonthOf(eng, sid, r) {
-  const v = eng.value(sid, r, PEN.H);
-  if (typeof v === 'string') return monthFromText(v);
-  if (isNum(v) && v > 20000) return serialToYmd(v).m;
-  return 0;
-}
-/** filas recientes con mes y monto, en orden cronológico: [{r,m,y,amt}] (los años que faltan se infieren hacia atrás) */
-function penHistory(eng, sid, from) {
-  const rows = [];
-  for (let r = from; r >= PEN.first && rows.length < 40; r--) {
-    const amt = numAt(eng, sid, r, PEN.I), m = penMonthOf(eng, sid, r);
-    if (amt === null || !m) continue;
-    rows.push({ r, m, amt, y: numAt(eng, sid, r, PEN.G) });
-  }
-  for (let i = 1; i < rows.length; i++) if (rows[i].y === null && rows[i - 1].y !== null) rows[i].y = rows[i - 1].y - (rows[i].m > rows[i - 1].m ? 1 : 0);
-  return rows.reverse();
-}
-/**
- * Monto sugerido para un mes. Base = el último mes "normal" (ni marzo ni diciembre). Diciembre = el doble de la base.
- * Marzo = la base + un SBU, que se estima con el aumento del marzo anterior ajustado por el cambio del monto base.
- * Cualquier otro mes = la base. Es solo una sugerencia: la usuaria puede cambiarla.
- */
-export function suggestPension(history, month) {
-  let base = null;
-  for (let i = history.length - 1; i >= 0; i--) if (history[i].m !== 3 && history[i].m !== 12) { base = history[i].amt; break; }
-  if (base === null && history.length) base = history[history.length - 1].amt;
-  if (base === null) return { base: null, suggested: null, rule: 'igual', sbu: null };
-  if (month === 12) return { base, suggested: round2(base * 2), rule: 'doble', sbu: null };
-  if (month === 3) {
-    for (let i = history.length - 1; i > 0; i--) {
-      if (history[i].m === 3 && history[i - 1].m === 2 && history[i - 1].amt > 0) {
-        const est = Math.round((history[i].amt - history[i - 1].amt) * (base / history[i - 1].amt));
-        if (Number.isFinite(est) && est > 0) return { base, suggested: round2(base + est), rule: 'sbu', sbu: est };
-      }
-    }
-    return { base, suggested: base, rule: 'sbu', sbu: null };
-  }
-  return { base, suggested: base, rule: 'igual', sbu: null };
-}
-function penPrepare(eng, opts) {
-  const sid = needSheet(eng, 'pension');
-  const lastContent = eng.lastRowWithContent(sid, PEN.G, PEN.I);
-  const hist = penHistory(eng, sid, lastContent);
-  if (!hist.length || lastContent < PEN.first) throw new QuickError('No se encontró el cuadro mensual.');
-  const L = hist[hist.length - 1];
-  if (L.r !== lastContent) throw new QuickError('La última fila del cuadro (fila ' + (lastContent + 1) + ') no tiene mes y monto; revísala en la hoja.');
-  if (L.y === null) throw new QuickError('No se pudo saber el año de la última fila.');
-  const lastSerial = ymdToSerial(L.y, L.m, 1), nextSerial = addMonths(lastSerial, 1), nx = serialToYmd(nextSerial);
-  const r = lastContent + 1, p = lastContent;
-  const count = Math.max(0, monthNum(opts.today) - monthNum(lastSerial));
-  const months = Array.from({ length: count }, (_, i) => addMonths(lastSerial, 1 + i));
-  const sg = suggestPension(hist, nx.m);
-  const warnings = [];
-  const over = [PEN.G, PEN.H, PEN.I, ...[9, 10, 11, 12, 13, 14]].filter((c) => filled(eng, sid, r, c)).map((c) => a1(r, c));
-  if (over.length) warnings.push({ code: 'overwrite', level: 'info', msg: 'La fila ' + (r + 1) + ' ya tiene contenido (' + over.join(', ') + '); se reemplazará.', cells: over });
-  const lacking = [9, 10, 14].filter((c) => !isFormulaAt(eng, sid, p, c)).map((c) => colLetter(c));
-  if (lacking.length) warnings.push({ code: 'formulas', level: 'warn', msg: 'La fila anterior no tiene fórmula en ' + lacking.join(', ') + '; la fila nueva quedará sin ellas.', cells: lacking });
-  if (numAt(eng, sid, PEN.rateRow, PEN.rateCol) === null) warnings.push({ code: 'rate', level: 'warn', msg: 'No se encontró la tasa anual que usa el acumulado con interés.' });
-  return {
-    ok: true, formId: 'pension', sid, lastRow: p, nextRow: r,
-    last: { y: L.y, m: L.m, amount: L.amt, serial: lastSerial, label: monthLabel(lastSerial) },
-    next: { y: nx.y, m: nx.m, serial: nextSerial, label: monthLabel(nextSerial), hText: MESES[nx.m - 1] },
-    missing: { count, months },
-    hints: { suggested: sg.suggested, base: sg.base, rule: sg.rule, sbu: sg.sbu, previous: L.amt },
-    history: hist, warnings,
-  };
-}
-function penValidate(eng, prep, v, opts) {
-  const errors = [], warnings = [], checks = [], pz = {};
-  const ms = parseMonthValue(v.month);
-  if (ms === null) errors.push({ field: 'month', msg: 'Elige el mes de la pensión.' });
-  else {
-    const diff = monthNum(ms) - monthNum(prep.next.serial);
-    if (diff < 0) errors.push({ field: 'month', msg: monthLabel(ms) + ' ya está registrado; el siguiente mes es ' + prep.next.label + '.' });
-    else if (diff > 0) errors.push({ field: 'month', msg: 'El cuadro es continuo: el siguiente mes es ' + prep.next.label + '. Registra primero los meses anteriores.' });
-    else if (monthNum(ms) > monthNum(opts.today)) warnings.push({ code: 'future', field: 'month', confirm: true, msg: monthLabel(ms) + ' es un mes futuro (aún no empieza).' });
-  }
-  const A = readAmount(v, 'amount', 'el monto del mes', errors, { positive: true });
-  if (A) {
-    const s = prep.hints.suggested;
-    if (s && Math.abs(A.value - s) / s > 0.5) warnings.push({ code: 'amount', field: 'amount', confirm: true, msg: 'El monto es muy distinto del sugerido (' + money(s) + '). ¿Está bien?' });
-    else if (s && Math.abs(A.value - s) > 0.005) checks.push({ key: 'sug', ok: null, text: 'Sugerido: ' + money(s) });
-  }
-  if (errors.length) return { errors, warnings, checks };
-  const m = serialToYmd(ms);
-  Object.assign(pz, { y: m.y, m: m.m, hText: MESES[m.m - 1], amount: round2(A.value), serial: ms });
-  return { errors, warnings, checks, parsed: pz };
-}
-function penPlan(eng, prep, pz) {
-  const sid = SHEETS.pension, r = prep.nextRow, p = prep.lastRow;
-  const outs = [['J', 'Acumulado', 'usd', true], ['K', 'Acumulado con interés', 'usd', true], ['L', 'Interés acumulado', 'usd', true], ['N', 'Meta', 'usd', false], ['O', 'Brecha contra la meta', 'usd', true]];
-  return {
-    sid, formId: 'pension', row: r, label: 'Pensión de ' + monthLabel(pz.serial),
-    copies: [{ r0: p, c0: PEN.formulaFrom, r1: p, c1: PEN.formulaTo, dr: r, dc: PEN.formulaFrom }],
-    writes: [{ r, c: PEN.G, raw: pz.y }, { r, c: PEN.H, raw: pz.hText }, { r, c: PEN.I, raw: pz.amount }],
-    styles: [PEN.G, PEN.H, PEN.I].map((c) => ({ r, c, from: [p, c] })),
-    out: outs.map(([col, label, kind, primary]) => ({ r, c: COL[col], key: col, label, kind, primary })),
-  };
-}
-function penSeed(eng, prep, plan) {
-  const out = [], p = prep.lastRow;
-  seedConst(eng, plan.sid, PEN.rateRow, PEN.rateRow, PEN.rateCol, PEN.rateCol, out);
-  seedConst(eng, plan.sid, p - 1, p - 1, 9, 11, out);
-  seedRaw(eng, plan.sid, p, PEN.G, PEN.formulaTo, out);
-  return { cells: out, rows: plan.row + 2, cols: 16 };
-}
-function penStatus(eng, opts) {
-  const prep = penPrepare(eng, opts), n = prep.missing.count;
-  if (n === 0) return { level: 'ok', text: 'Al día', detail: 'Último mes: ' + prep.last.label };
-  if (n === 1) return { level: 'warn', text: 'Pensión de ' + prep.next.label + ' pendiente', detail: 'Último mes: ' + prep.last.label };
-  return { level: 'late', text: 'Faltan ' + n + ' meses de pensión', detail: monthLabel(prep.missing.months[0]) + ' a ' + monthLabel(prep.missing.months[n - 1]) };
-}
-const pension = makeForm({
-  id: 'pension', key: 'pension', title: 'Pensión del mes', icon: '📅',
-  desc: 'Agrega el mes con su monto y recalcula el acumulado.',
-  prepare: penPrepare, validate: penValidate, plan: penPlan, seed: penSeed, status: penStatus,
-});
 
 /* ================================================================== PAGO DEL CARRO (registro de pagos dentro de la hoja de préstamos) */
 /* Un pago = fecha en S y monto NEGATIVO en V, en la primera fila libre de la zona de pagos. No hay fórmulas por fila: el
@@ -1050,8 +812,8 @@ const produb = makeForm({
 });
 
 /* ================================================================== registro de formularios */
-export { luz, pension, carro, poliza, tcpich, produb };
-export const FORMS = [luz, pension, carro, poliza, tcpich, produb];
+export { carro, poliza, tcpich, produb };
+export const FORMS = [carro, poliza, tcpich, produb];
 export const API = Object.fromEntries(FORMS.map((f) => [f.id, f]));
 export const getForm = (id) => API[id] || null;
 /** cambia el título o la descripción de un formulario (p. ej. con nombres propios que no deben vivir en el código) */
@@ -1082,7 +844,7 @@ function renderStatus(node, s) {
 const todayOf = (ctx) => (typeof ctx.today === 'function' ? ctx.today() : todaySerial());
 
 /* ---------------------------------------------------------------- menú */
-export function mountHub(host, ctx) {
+export function mountHub(host, ctx, { exclude = [] } = {}) {
   let dead = false, token = 0;
   const root = el('div', { class: 'qk-hub' });
   host.append(root);
@@ -1092,7 +854,7 @@ export function mountHub(host, ctx) {
     el('p', { class: 'muted', text: 'Registros periódicos que no son movimientos del banco. Elige uno y se anota en la fila correcta de su hoja.' })));
   const grid = el('div', { class: 'qk-grid' });
   // solo se ofrecen los formularios cuya hoja existe en este libro (si se borra una hoja, su captura desaparece del menú)
-  const forms = FORMS.filter((f) => !ctx.engine || typeof ctx.engine.sheet !== 'function' || ctx.engine.sheet(f.sid));
+  const forms = FORMS.filter((f) => !exclude.includes(f.id) && (!ctx.engine || typeof ctx.engine.sheet !== 'function' || ctx.engine.sheet(f.sid)));
   for (const f of forms) {
     const info = formInfo(f, ctx.engine);
     const st = el('span', { class: 'qk-st qk-st-load' }, el('i', { class: 'qk-dot', 'aria-hidden': 'true', text: '…' }), el('span', { class: 'qk-st-t' }, el('b', { text: 'Calculando…' })));
@@ -1123,45 +885,11 @@ export function mountHub(host, ctx) {
 /* ---------------------------------------------------------------- especificación de pantalla de cada formulario */
 const hasMonthInput = (() => { let r = null; return () => { if (r === null) { try { const i = document.createElement('input'); i.setAttribute('type', 'month'); r = i.type === 'month'; } catch (e) { r = false; } } return r; }; })();
 const numStr = (v) => (v === null || v === undefined || !Number.isFinite(+v) ? '' : String(round2(+v)));
-const fmtInt = (v) => (v === null || v === undefined ? '—' : Math.round(v).toLocaleString('en-US'));
 const prevText = (label, v, fmt = money) => (v === null || v === undefined ? '' : label + ': ' + fmt(v) + '.');
-const pensionHelp = (h) => {
-  if (h.rule === 'doble') return 'Diciembre: el doble del monto base (' + money(h.base) + ' × 2).';
-  if (h.rule === 'sbu') return h.sbu ? 'Marzo: monto base + un SBU (estimado ' + money(h.sbu) + ').' : 'Marzo: se suma un SBU al monto base; no hay un marzo anterior para estimarlo.';
-  return 'Sugerido: igual al mes anterior (' + money(h.base) + ').';
-};
 const levelText = { late: 'Vencida', due: 'Vence pronto', soon: 'Próxima', ok: 'Vigente' };
 const polBadge = (p) => (p.daysLeft < 0 ? 'Venció ' + dateText(p.due) : 'Vence ' + dateText(p.due) + ' · ' + (p.daysLeft === 0 ? 'hoy' : 'en ' + p.daysLeft + ' ' + plural(p.daysLeft, 'día', 'días')));
 
 const UI = {
-  luz: {
-    save: 'Guardar factura',
-    defaults: (p) => ({ month: monthInputValue(p.month), days: String(p.hints.days) }),
-    band: (p) => {
-      const out = ['Se escribirá en la fila ' + (p.nextRow + 1) + ' · último mes registrado: ' + monthLabel(p.prev.month) + '.'];
-      if (p.missing.count) out.push({ level: p.missing.count >= 3 ? 'late' : 'warn', text: (p.missing.count === 1 ? 'Falta 1 factura: ' : 'Faltan ' + p.missing.count + ' facturas: ') + monthLabel(p.missing.months[0]) + (p.missing.count > 1 ? ' a ' + monthLabel(p.missing.months[p.missing.count - 1]) : '') + '.' });
-      return out;
-    },
-    fields: (S, p) => [
-      { key: 'month', type: 'month', label: 'Mes de la factura', help: 'Siguiente mes del cuadro: ' + monthLabel(p.month) + '.' },
-      { key: 'C', type: 'money', ops: true, unit: '$', label: 'Consumo (USD)', ph: 'p. ej. 60+30+0.5', help: prevText('Mes anterior', p.prev.C) },
-      { key: 'E', type: 'money', ops: true, unit: '$', label: 'Total de la planilla (USD)', ph: 'p. ej. 50+30+0.5', help: prevText('Mes anterior', p.prev.E) },
-      { key: 'K', type: 'money', ops: true, label: 'Lectura neta del medidor', ph: 'p. ej. 25000-4000', help: 'Lectura anterior: ' + fmtInt(p.prev.K) + '. Puede ser una resta.' },
-      { key: 'O', type: 'money', ops: true, unit: '$', label: 'Subsidio o descuento (USD)', ph: 'p. ej. 30+0.5', help: prevText('Mes anterior', p.prev.O) },
-      { key: 'P', type: 'money', ops: true, unit: '$', label: 'Valor de la factura (a pagar)', ph: 'p. ej. 50', help: prevText('Mes anterior', p.prev.P) },
-      { key: 'T', type: 'money', ops: true, unit: 'kWh', label: 'Energía generada por los paneles', ph: 'p. ej. 100', help: prevText('Mes anterior', p.prev.T, (v) => fmtInt(v) + ' kWh') },
-      { key: 'days', type: 'int', unit: 'días', label: 'Días del período', ph: '30', help: 'El mes anterior usó ' + p.hints.days + ' días. Se usa para el consumo por día.' },
-    ],
-  },
-  pension: {
-    save: 'Guardar pensión',
-    defaults: (p) => ({ month: monthInputValue(p.next.serial), amount: numStr(p.hints.suggested) }),
-    band: (p) => ['Se escribirá en la fila ' + (p.nextRow + 1) + ' · último mes registrado: ' + p.last.label + '.'].concat(p.missing.count ? [{ level: p.missing.count >= 2 ? 'late' : 'warn', text: p.missing.count === 1 ? 'Pendiente: ' + p.next.label + '.' : 'Faltan ' + p.missing.count + ' meses: ' + monthLabel(p.missing.months[0]) + ' a ' + monthLabel(p.missing.months[p.missing.count - 1]) + '.' }] : []),
-    fields: (S, p) => [
-      { key: 'month', type: 'month', label: 'Mes', help: 'Siguiente mes del cuadro: ' + p.next.label + '.' },
-      { key: 'amount', type: 'money', ops: true, unit: '$', label: 'Monto del mes (USD)', ph: 'p. ej. 1000', help: pensionHelp(p.hints) },
-    ],
-  },
   carro: {
     save: 'Guardar pago',
     defaults: (p, S) => ({ date: S.today ? dateInputValue(S.today) : '', amount: numStr(p.hints.lastAmount) }),
@@ -1358,7 +1086,7 @@ export function mountForm(host, ctx, formId) {
       const f = els.defs[key], inp = els.inputs[key];
       if (!f || f.type !== 'money' || !inp) { node.textContent = ''; continue; }
       const a = parseAmount(inp.value);
-      node.textContent = a.ok && a.isExpr ? '= ' + (f.unit === 'kWh' ? fmtInt(a.value) + ' kWh' : f.unit === '%' ? a.value + '%' : money(a.value)) : '';
+      node.textContent = a.ok && a.isExpr ? '= ' + (f.unit === '%' ? a.value + '%' : money(a.value)) : '';
     }
   }
   function updateFieldMessages() {

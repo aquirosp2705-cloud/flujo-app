@@ -172,6 +172,66 @@
 /* ----- campo de archivo oculto (se abre desde el botón) ----- */
 .fx-file { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); border: 0; white-space: nowrap; }
 
+/* ----- código de conexión: «Usar en otro dispositivo» y «Ya tengo un código de conexión» ----- */
+.fx-pair [hidden], .fx-confirm[hidden] { display: none; }
+.fx-pair__lead { margin: 0 0 6px; color: var(--fx-muted); }
+.fx-pair__out { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--fx-border); }
+.fx-pair__out > .fx-label { margin: 0; }
+.fx-pair__out > .fx-hint { margin: 0 0 12px; }
+.fx-pair__key {
+  margin: 6px 0 4px;
+  padding: 12px 10px;
+  text-align: center;
+  color: var(--fx-fg);
+  background: var(--fx-accent-soft);
+  border: 2px solid var(--fx-accent);
+  border-radius: var(--fx-radius);
+  font: 700 clamp(1.2rem, 6.2vw, 1.75rem)/1.2 ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  letter-spacing: 0.1em;
+  overflow-wrap: anywhere;
+}
+.fx-pair__key:focus-visible { outline: 2px solid var(--fx-focus); outline-offset: 2px; }
+.fx-pair__alt { margin: 12px 0 0; }
+/* 16 px o más: así iOS no hace zoom al tocar el campo */
+.fx-input--code { min-height: 92px; font: 16px/1.35 ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; word-break: break-all; resize: vertical; }
+.fx-input--key { font-size: 16px; font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace; letter-spacing: 0.08em; text-transform: uppercase; }
+.fx-input--key::placeholder { text-transform: none; letter-spacing: 0.04em; }
+.fx-link {
+  min-height: 40px;
+  padding: 6px 2px;
+  color: var(--fx-accent);
+  background: none;
+  border: 0;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.fx-link:hover:not(:disabled) { filter: brightness(1.15); }
+.fx-link:disabled { opacity: 0.55; cursor: not-allowed; }
+.fx-link:focus-visible { outline: 2px solid var(--fx-focus); outline-offset: 2px; border-radius: 4px; }
+.fx-join--below { margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--fx-border); }
+.fx-join .fx-field { margin-bottom: 12px; }
+.fx-sync--join { padding-bottom: 0; }
+.fx-sync--join > .fx-card { margin-bottom: 0; }
+.fx-sync--join .fx-h3 { font-size: 1.1rem; }
+.fx-confirm {
+  margin: 4px 0 0;
+  padding: 12px 14px;
+  background: var(--fx-warn-bg);
+  border: 1px solid var(--fx-warn);
+  border-radius: 6px;
+}
+.fx-confirm:focus-visible { outline: 2px solid var(--fx-focus); outline-offset: 2px; }
+.fx-confirm__q { margin: 0 0 4px; font-size: 1.05rem; font-weight: 650; overflow-wrap: anywhere; }
+.fx-confirm__info, .fx-confirm__warn { margin: 4px 0 0; font-size: 0.9rem; }
+.fx-confirm__warn { color: var(--fx-warn); font-weight: 600; }
+/* En la pantalla de primer uso (#boot) app.css da a TODOS los <p> color apagado y margen propio (selector con id: gana a las clases de arriba) */
+#boot .fx-sync .fx-msg__text { margin: 0; color: inherit; }
+#boot .fx-sync .fx-pair__lead { margin: 0 0 6px; color: var(--fx-muted); }
+#boot .fx-sync .fx-confirm__q { margin: 0 0 4px; color: inherit; }
+#boot .fx-sync .fx-confirm__info { margin: 4px 0 0; color: inherit; }
+#boot .fx-sync .fx-confirm__warn { margin: 4px 0 0; color: var(--fx-warn); }
+
 @media (max-width: 560px) {
   .fx-grid { grid-template-columns: 1fr; }
   .fx-actions .fx-btn { flex: 1 1 100%; }

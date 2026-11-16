@@ -8,12 +8,23 @@
  *   });                                            // bundle = {meta, sheetDatas} leído del Store; info = {reason, changed?}
  *   ui.refresh();  ui.destroy();
  *
+ * Código de conexión (enlazar otro dispositivo SIN crear un token nuevo; ver js/pairing.js):
+ *   - Opciones extra de mountSyncSettings: pairing (false = sin la tarjeta del código), pairingCode (texto que llegó por un
+ *     enlace «#conectar=…»: se pega en el cuadro «Código» y el foco pasa a «Clave»).
+ *   - Dispositivo ya conectado: tarjeta «Usar en otro dispositivo» (crea código + clave y los muestra; no se guardan en ningún lado).
+ *     Dispositivo sin conexión: bloque «Ya tengo un código de conexión». Ambos abren el código, MUESTRAN a qué cuenta y
+ *     repositorio se va a conectar y piden confirmación; la conexión se prueba ANTES de guardar nada.
+ *   - mountPairingJoin(contenedor, {store, sync, onBundleReplaced, code}): solo el bloque «Ya tengo un código de conexión»
+ *     (pantalla de primer uso). Devuelve lo mismo que mountSyncSettings más ui.setPairingCode(código).
+ *
  * Clases CSS con prefijo "fx-" (ver css/sync.css). Todo el texto dinámico se inserta con textContent (sin innerHTML).
  * El token nunca se vuelve a escribir en el DOM: el campo queda vacío tras guardar (vacío = conservar el guardado).
+ * El código y la clave que se crean solo viven en memoria mientras la tarjeta está abierta: no van a ningún almacenamiento ni a la consola.
  */
 
-import { AutoSaver, StoreError, Store } from './store.js';
-import { GithubError } from './sync-github.js';
+import { AutoSaver, StoreError, Store, KV } from './store.js';
+import { GithubError, GithubSync } from './sync-github.js';
+import { PairingError, newKey, formatKey, createCode, openCode, linkFor } from './pairing.js';
 
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
@@ -48,10 +59,18 @@ const KIND = { pull: 'descarga', push: 'subida de cambios', initial: 'carga inic
 
 let uidCounter = 0;
 
-export function mountSyncSettings(containerEl, { store, sync, engine = null, autosaver = null, onBundleReplaced = null } = {}) {
+/** Solo el bloque «Ya tengo un código de conexión» (pantalla de primer uso, sin ninguna otra tarjeta de ajustes). */
+export function mountPairingJoin(containerEl, opts = {}) {
+  const { code = null, pairingCode = null, ...rest } = opts || {};
+  return mountSyncSettings(containerEl, { ...rest, pairingCode: pairingCode || code, only: 'join' });
+}
+
+export function mountSyncSettings(containerEl, { store, sync, engine = null, autosaver = null, onBundleReplaced = null, pairing = true, pairingCode = null, only = null } = {}) {
   if (!containerEl) throw new TypeError('mountSyncSettings: falta el contenedor.');
   if (!store || !sync) throw new TypeError('mountSyncSettings: faltan store y sync.');
   const uid = 'fx' + (++uidCounter);
+  const joinOnly = only === 'join';                 // solo el bloque «Ya tengo un código de conexión»
+  const withPairing = joinOnly || pairing !== false;
   let busy = false;
   let destroyed = false;
   let metaNames = new Map();
@@ -121,10 +140,83 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     ['Pégalo en el campo «Token» de arriba, escribe tu usuario y pulsa «Probar conexión».']
   ];
 
-  const root = h('section', { class: 'fx-sync', 'aria-labelledby': uid + '-title' },
+  /* ---- código de conexión: crear (dispositivo ya conectado) y pegar (dispositivo nuevo) ---- */
+  // El mismo cuadro de avance/mensajes (progBox, msgBox) se muda al lugar donde la persona está trabajando.
+  const syncSlot = h('div', { class: 'fx-slot' }, progBox, msgBox);       // «Sincronizar»
+  const createSlot = h('div', { class: 'fx-slot' });                       // «Usar en otro dispositivo»
+  const joinSlot = h('div', { class: 'fx-slot' });                         // «Ya tengo un código de conexión»
+  const useSlot = (slot) => { if (msgBox.parentNode !== slot) slot.append(progBox, msgBox); };
+  const sayAt = (slot, kind, text, details) => { useSlot(slot); say(kind, text, details); };
+
+  let issued = null;          // {code, link}: el código recién creado, SOLO en memoria mientras la tarjeta esté abierta
+  let pending = null;         // código ya abierto, a la espera de que la persona confirme a qué cuenta se conecta
+  let joinOpen = false;       // en un dispositivo ya conectado, el bloque de pegar un código empieza plegado
+
+  // crear
+  const keyOut = h('div', { class: 'fx-pair__key', role: 'group', 'aria-label': 'Clave de conexión', tabindex: '-1', 'data-fx': 'pair-key' });
+  const codeOut = h('textarea', { class: 'fx-input fx-input--code', id: uid + '-pair-out', readonly: true, rows: '4', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'data-fx': 'pair-code' });
+  codeOut.addEventListener('focus', () => codeOut.select());
+  const createBtn = btn('Crear código de conexión', 'fx-btn--primary', () => run(doCreateCode, createSlot), { 'data-fx': 'pair-create' });
+  const copyCodeBtn = btn('Copiar código', 'fx-btn--primary', () => doCopy('code'), { 'data-fx': 'pair-copy' });
+  const copyLinkBtn = btn('Copiar enlace', '', () => doCopy('link'), { 'data-fx': 'pair-copy-link' });
+  const shareBtn = typeof navigator !== 'undefined' && typeof navigator.share === 'function' ? btn('Compartir', '', () => doShare(), { 'data-fx': 'pair-share' }) : null;
+  const hideBtn = btn('Ocultar el código', 'fx-btn--quiet', () => { wipePair(); createBtn.focus(); }, { 'data-fx': 'pair-hide' });
+  const pasteLink = h('button', { class: 'fx-link', type: 'button', 'aria-expanded': 'false', 'aria-controls': uid + '-join', 'data-fx': 'pair-paste', text: 'Pegar un código de conexión' });
+  pasteLink.addEventListener('click', () => setJoinOpen(!joinOpen, true));
+  const outBox = h('div', { class: 'fx-pair__out', hidden: true, 'data-fx': 'pair-out' },
+    h('p', { class: 'fx-label' }, 'Clave'),
+    keyOut,
+    h('p', { class: 'fx-hint' }, 'Anótala o léela de esta pantalla: no se guarda en ningún sitio.'),
+    h('label', { class: 'fx-label', for: codeOut.id }, 'Código'),
+    codeOut,
+    h('div', { class: 'fx-actions' }, copyCodeBtn, copyLinkBtn, shareBtn),
+    h('ol', { class: 'fx-steps' },
+      h('li', {}, 'Envíate el código por WhatsApp (chat contigo mismo) o por correo.'),
+      h('li', {}, 'En el otro dispositivo abre Flujo y busca «Ya tengo un código de conexión».'),
+      h('li', {}, 'Pega el código y escribe la clave.')),
+    h('p', { class: 'fx-note' }, 'Sin la clave, el código no sirve. Para cortar el acceso de un dispositivo, borra el token en GitHub.'),
+    h('div', { class: 'fx-actions' }, hideBtn));
+  const createBox = joinOnly ? null : h('div', { class: 'fx-create', 'data-fx': 'create' },
+    h('h3', { class: 'fx-h3' }, 'Usar en otro dispositivo'),
+    h('p', { class: 'fx-pair__lead' }, 'Conecta tu celular u otro computador con esta misma información, sin crear otro token en GitHub: este dispositivo genera un código y una clave.'),
+    h('div', { class: 'fx-actions' }, createBtn),
+    createSlot,
+    outBox,
+    h('p', { class: 'fx-pair__alt' }, pasteLink));
+
+  // pegar
+  const codeIn = h('textarea', { class: 'fx-input fx-input--code', id: uid + '-pair-code', rows: '3', autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', placeholder: 'FLUJO1.…', 'data-fx': 'join-code' });
+  const keyIn = h('input', { class: 'fx-input fx-input--key', id: uid + '-pair-key', type: 'text', name: 'fx-pair-key', autocomplete: 'off', autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go', maxlength: '30', placeholder: 'XXXX-XXXX-XXXX', 'data-fx': 'join-key' });
+  const joinBtn = btn('Conectar este dispositivo', 'fx-btn--primary', () => run(doJoin, joinSlot), { 'data-fx': 'join-go' });
+  keyIn.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); if (!busy) joinBtn.click(); } });
+  const confirmQ = h('p', { class: 'fx-confirm__q', id: uid + '-confirm-q', 'data-fx': 'join-question' });
+  const confirmInfo = h('p', { class: 'fx-confirm__info', 'data-fx': 'join-info' });
+  const confirmWarn = h('p', { class: 'fx-confirm__warn', 'data-fx': 'join-warn' });
+  const yesBtn = btn('Sí, es mi cuenta: conectar', 'fx-btn--primary', () => run(doJoinConfirmed, joinSlot), { 'data-fx': 'join-yes' });
+  const noBtn = btn('Cancelar', '', () => { showJoinForm(); keyIn.focus(); }, { 'data-fx': 'join-no' });
+  const confirmBox = h('div', { class: 'fx-confirm', role: 'group', 'aria-labelledby': confirmQ.id, tabindex: '-1', hidden: true, 'data-fx': 'join-confirm' },
+    confirmQ, confirmInfo, confirmWarn, h('div', { class: 'fx-actions' }, yesBtn, noBtn));
+  const codeField = field('Código', codeIn, 'Empieza con FLUJO1. También sirve el enlace completo.');
+  const keyField = field('Clave', keyIn, 'Las 12 letras y números que viste en la pantalla del otro dispositivo (por ejemplo ABCD-EFGH-JKMN).');
+  for (const [input, fieldEl] of [[codeIn, codeField], [keyIn, keyField]]) {      // la ayuda de cada campo la lee el lector de pantalla
+    const hint = fieldEl.querySelector('.fx-hint');
+    hint.id = input.id + '-hint';
+    input.setAttribute('aria-describedby', hint.id);
+  }
+  const joinForm = h('div', { class: 'fx-join__form' }, codeField, keyField, h('div', { class: 'fx-actions' }, joinBtn));
+  const joinBox = h('div', { class: 'fx-join', id: uid + '-join', 'data-fx': 'join' },
+    h(joinOnly ? 'h2' : 'h3', { class: 'fx-h3' }, 'Ya tengo un código de conexión'),         // en la pantalla de primer uso es el título principal
+    h('p', { class: 'fx-pair__lead' }, 'Si ya usas Flujo en otro dispositivo, crea allí el código (Ajustes → «Usar en otro dispositivo») y pégalo aquí. No necesitas crear un token en GitHub.'),
+    joinForm, confirmBox, joinSlot);
+  const pairCard = withPairing ? h('div', { class: 'fx-card fx-pair', 'data-fx': 'pair-card' }, createBox, joinBox) : null;
+  actionBtns.push(createBtn, joinBtn, yesBtn, noBtn, pasteLink);
+
+  const root = joinOnly ? h('section', { class: 'fx-sync fx-sync--join', 'aria-label': 'Conectar con un código' }, pairCard) : h('section', { class: 'fx-sync', 'aria-labelledby': uid + '-title' },
     h('h2', { class: 'fx-title', id: uid + '-title' }, 'Sincronización con GitHub'),
     h('p', { class: 'fx-lead' }, 'Tus datos se guardan siempre en este dispositivo. Si quieres, además se copian a un repositorio ',
       h('b', {}, 'privado'), ' de tu cuenta de GitHub para tenerlos iguales en tu computador y tu celular, y con respaldo.'),
+
+    pairCard,
 
     h('div', { class: 'fx-card' },
       h('h3', { class: 'fx-h3' }, 'Conexión'),
@@ -138,15 +230,15 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
           h('span', { class: 'fx-hint', 'data-fx': 'token-hint' }))),
       h('p', { class: 'fx-note' },
         h('b', {}, 'Seguridad: '), 'el token se guarda solo en este dispositivo (en el almacenamiento del navegador) y únicamente se envía a GitHub. ',
-        'No lo compartas ni lo pegues en otros sitios. Si pierdes un dispositivo, revoca el token en GitHub ',
+        'No lo compartas ni lo pegues en otros sitios. Para conectar otro dispositivo no hace falta copiarlo: crea un código de conexión en uno que ya esté conectado («Usar en otro dispositivo»). ',
+        'Si pierdes un dispositivo, revoca el token en GitHub ',
         '(Settings → Developer settings → Fine-grained tokens).'),
       h('div', { class: 'fx-actions' }, testBtn, saveBtn, forgetBtn)),
 
     h('div', { class: 'fx-card' },
       h('h3', { class: 'fx-h3' }, 'Sincronizar'),
       h('div', { class: 'fx-actions' }, pushBtn, pullBtn, initialBtn),
-      progBox,
-      msgBox,
+      syncSlot,
       conflictsBox,
       statusList),
 
@@ -157,7 +249,8 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
           '. Nombre: ', h('b', {}, 'flujo-datos'), '. Marca ', h('b', {}, 'Private'), '. No hace falta README ni otros archivos (puede quedar vacío). Pulsa ', h('b', {}, 'Create repository'), '.'),
         h('ol', { class: 'fx-steps' }, steps.map((s) => h('li', {}, s))),
         h('p', {}, 'Cuando el token venza (1 año), repite los pasos 4 a 9 y pega el nuevo: no se pierde ningún dato. ',
-          'En cada dispositivo (computador, celular…) hay que pegar el token una sola vez.'))),
+          'En cada dispositivo (computador, celular…) hay que pegar el token una sola vez. ',
+          'Para el segundo dispositivo hay una forma más fácil: en uno que ya esté conectado usa «Usar en otro dispositivo» y no necesitas crear otro token.'))),
 
     h('div', { class: 'fx-card' },
       h('h3', { class: 'fx-h3' }, 'Respaldo local'),
@@ -181,7 +274,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
   };
   const clearMsg = () => { msgBox.hidden = true; msgBox.replaceChildren(); };
   const explain = (e) => {
-    if (e instanceof GithubError || e instanceof StoreError) {
+    if (e instanceof GithubError || e instanceof StoreError || e instanceof PairingError) {
       let t = e.message;
       if (e.partial && e.partial.pushed && e.partial.pushed.length) t += ' (Antes del error se subieron ' + e.partial.pushed.length + ' hoja(s).)';
       return t;
@@ -203,8 +296,10 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     for (const x of conflictsBox.querySelectorAll('button')) x.disabled = b;
     if (b) { progBox.hidden = false; progBar.removeAttribute('value'); progText.textContent = 'Trabajando…'; } else progBox.hidden = true;
   };
-  async function run(fn) {
+  /** Ejecuta una acción con los botones bloqueados; slot = dónde se muestran el avance y los mensajes (por omisión, «Sincronizar»). */
+  async function run(fn, slot = syncSlot) {
     if (busy || destroyed) return;
+    useSlot(slot);
     setBusy(true);
     clearMsg();
     try { await fn(); }
@@ -374,9 +469,170 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     say('ok', 'Respaldo restaurado: ' + plural(n, 'hoja', 'hojas') + '.' + (pending && pending.length ? ' Hay ' + plural(pending.length, 'archivo', 'archivos') + ' distintos de GitHub, pendientes de subir.' : ''));
   }
 
+  /* ------------------------------------------------------------ código de conexión */
+  /** Dirección de esta página sin «?…» ni «#…» (base del enlace directo). */
+  const pageBase = () => String(location.href).split('#')[0].split('?')[0];
+
+  /** Qué parte de la tarjeta se ve: dispositivo conectado → «Usar en otro dispositivo»; sin conexión → «Ya tengo un código». */
+  function syncPairMode() {
+    if (!pairCard) return;
+    const connected = !joinOnly && sync.isConfigured();
+    if (createBox) createBox.hidden = !connected;
+    joinBox.classList.toggle('fx-join--below', connected);
+    joinBox.hidden = connected ? !joinOpen : false;
+    pasteLink.setAttribute('aria-expanded', String(connected && joinOpen));
+    if (!connected && issued) wipePair();          // ya no hay token que empaquetar: nada de código ni clave a la vista
+  }
+
+  function setJoinOpen(open, focusIt) {
+    joinOpen = !!open;
+    syncPairMode();
+    if (joinOpen && focusIt) (codeIn.value.trim() ? keyIn : codeIn).focus();
+  }
+
+  /** Borra de la pantalla (y de la memoria de este módulo) el código y la clave recién creados. */
+  function wipePair() {
+    issued = null;
+    keyOut.textContent = '';
+    codeOut.value = '';
+    outBox.hidden = true;
+    createBtn.textContent = 'Crear código de conexión';
+    if (msgBox.parentNode === createSlot) clearMsg();
+  }
+
+  /** Crea clave + código con lo guardado en el Store (no con lo que haya escrito en los campos). Nada se guarda en ningún sitio. */
+  async function doCreateCode() {
+    const saved = await store.getSetting(KV.GITHUB, null);
+    if (!saved || !saved.owner || !saved.repo || !saved.token) {
+      say('warn', 'Este dispositivo todavía no tiene la conexión guardada. Guarda tu usuario, repositorio y token en «Conexión» y vuelve a intentarlo.');
+      return;
+    }
+    onProgress({ message: 'Creando el código…' });
+    const key = newKey();
+    const code = await createCode({ owner: saved.owner, repo: saved.repo, branch: saved.branch || 'main', token: saved.token }, key);
+    issued = { code, link: linkFor(code, pageBase()) };
+    keyOut.textContent = formatKey(key);
+    codeOut.value = code;
+    outBox.hidden = false;
+    createBtn.textContent = 'Crear otro código';
+    say('ok', 'Código creado. Anota la clave y envía el código al otro dispositivo.');
+    keyOut.focus();
+  }
+
+  async function copyText(text) {
+    try { if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') { await navigator.clipboard.writeText(text); return true; } } catch (_) { /* plan B */ }
+    const ta = h('textarea', { class: 'fx-file', 'aria-hidden': 'true', tabindex: '-1', readonly: true });   // fuera de pantalla y se quita enseguida
+    ta.value = text;
+    root.append(ta);
+    let ok = false;
+    try { ta.select(); ta.setSelectionRange(0, text.length); ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    ta.value = '';
+    ta.remove();
+    return ok;
+  }
+
+  async function doCopy(what) {
+    if (!issued) return;
+    const ok = await copyText(what === 'link' ? issued.link : issued.code);
+    if (ok) {
+      sayAt(createSlot, 'ok', what === 'link' ? 'Enlace copiado. Ábrelo en el otro dispositivo y escribe la clave.' : 'Código copiado. Pégalo en un mensaje para ti (WhatsApp o correo).');
+    } else {
+      if (what === 'code') { codeOut.focus(); codeOut.select(); }
+      sayAt(createSlot, 'warn', what === 'code'
+        ? 'No se pudo copiar solo: el código quedó seleccionado. Cópialo tú (Ctrl+C, o mantén pulsado y elige «Copiar»).'
+        : 'No se pudo copiar el enlace. Usa «Copiar código».');
+    }
+  }
+
+  async function doShare() {
+    if (!issued || typeof navigator.share !== 'function') return;
+    try { await navigator.share({ title: 'Código de conexión de Flujo', text: issued.code }); }      // solo el código: la clave nunca se comparte
+    catch (e) { if (!(e && e.name === 'AbortError')) sayAt(createSlot, 'warn', 'No se pudo abrir el menú de compartir. Usa «Copiar código».'); }
+  }
+
+  /** Vuelve al formulario (y suelta de memoria el código ya abierto, que lleva el token). */
+  function showJoinForm() {
+    if (pending) pending.token = '';
+    pending = null;
+    confirmBox.hidden = true;
+    joinForm.hidden = false;
+  }
+
+  /** Paso 1: abre el código con la clave y MUESTRA a qué cuenta y repositorio llevaría. Todavía no cambia nada. */
+  async function doJoin() {
+    const code = codeIn.value, key = keyIn.value;
+    if (!code.trim()) { say('warn', 'Pega el código de conexión en el cuadro «Código».'); codeIn.focus(); return; }
+    if (!key.trim()) { say('warn', 'Escribe la clave (12 letras y números) en el cuadro «Clave».'); keyIn.focus(); return; }
+    onProgress({ message: 'Abriendo el código…' });
+    let opened;
+    try { opened = await openCode(code, key); }
+    catch (e) {
+      say('error', explain(e));
+      if (e instanceof PairingError) { if (e.code === 'KEY') { keyIn.focus(); try { keyIn.select(); } catch (_) { /* nada */ } } else codeIn.focus(); }
+      return;
+    }
+    pending = opened;
+    const cur = sync.getConfig();
+    const lc = (s) => String(s || '').toLowerCase();
+    const when = ago(opened.createdAt);
+    confirmQ.replaceChildren('Conectar con ', h('b', {}, opened.owner + '/' + opened.repo));
+    confirmInfo.textContent = 'Rama «' + opened.branch + '». Código creado el ' + fmtDate(opened.createdAt) + (when ? ' (' + when + ')' : '') + '.';
+    confirmWarn.textContent = 'Sigue solo si reconoces esta cuenta de GitHub. Si alguien más te envió este código, tus datos podrían terminar en la cuenta de esa persona.' +
+      (sync.isConfigured() && !(lc(cur.owner) === lc(opened.owner) && lc(cur.repo) === lc(opened.repo))
+        ? ' Este dispositivo está conectado ahora con ' + cur.owner + '/' + cur.repo + ': esa conexión se reemplazará.' : '');
+    joinForm.hidden = true;
+    confirmBox.hidden = false;
+    confirmBox.focus();
+  }
+
+  /** Paso 2 (tras confirmar): prueba la conexión SIN guardar nada, y solo si funciona guarda la configuración y baja todos los datos. */
+  async function doJoinConfirmed() {
+    const p = pending;
+    if (!p) { showJoinForm(); return; }
+    const label = p.owner + '/' + p.repo;
+    let probe;
+    try {          // instancia aparte: un código viejo o ajeno no deja un token malo guardado ni pisa la conexión que ya funcionaba
+      onProgress({ message: 'Probando la conexión con GitHub…' });
+      probe = await new GithubSync(store, { owner: p.owner, repo: p.repo, branch: p.branch, token: p.token, apiBase: sync.getConfig().apiBase }).testConnection();
+    } catch (e) { say('error', explain(e)); showJoinForm(); return; }
+    if (!probe.ok) {
+      const details = probe.checks.slice();
+      for (const w of probe.warnings) details.push({ ok: false, text: w });
+      let text = probe.message;
+      if (probe.code === 'BAD_TOKEN') text = 'El código ya no sirve: GitHub rechazó el token que trae (venció o fue revocado). Crea un código nuevo en el dispositivo donde ya usas Flujo.';
+      else if (probe.code === 'NOT_FOUND') text = 'No se encontró el repositorio «' + label + '», o el token del código ya no tiene acceso a él. Crea un código nuevo en el dispositivo donde ya usas Flujo.';
+      say(probe.code === 'PUBLIC_REPO' ? 'warn' : 'error', text, details);
+      showJoinForm();
+      return;
+    }
+    sync.setConfig({ owner: p.owner, repo: p.repo, branch: p.branch, token: p.token });
+    await sync.saveConfig();                       // el token queda solo en IndexedDB
+    ownerIn.value = p.owner; repoIn.value = p.repo; branchIn.value = p.branch; tokenIn.value = '';
+    showJoinForm();                                // suelta la copia en memoria del token
+    await flushLocal();
+    let res;
+    try { res = await sync.pullAll({ onProgress }); }
+    catch (e) {
+      say('error', 'La conexión con ' + label + ' quedó guardada, pero no se pudieron descargar los datos: ' + explain(e) + ' Vuelve a pulsar «Conectar este dispositivo» para reintentar.');
+      return;
+    }
+    const details = [...probe.warnings, ...res.warnings].map((w) => ({ ok: false, text: w }));
+    if (res.empty) {
+      say('warn', 'Este dispositivo quedó conectado con ' + label + ', pero el repositorio todavía no tiene datos. Súbelos desde el dispositivo donde los tienes (Ajustes → «Subir todo (primera vez)») y luego vuelve a pulsar «Conectar este dispositivo».', details);
+      return;
+    }
+    codeIn.value = ''; keyIn.value = '';           // ya cumplieron su trabajo
+    if (res.changed) await replaced('pull', { changed: res.downloaded, via: 'pairing' });
+    if (res.conflicts.length) say('warn', plural(res.conflicts.length, 'hoja cambió', 'hojas cambiaron') + ' en GitHub y también en este dispositivo: no se pisó nada. Elige qué versión conservar en «Sincronizar».', details);
+    else if (res.changed) say('ok', 'Listo: este dispositivo quedó conectado con ' + label + ' y descargó ' + plural(res.downloaded.length, 'archivo', 'archivos') + '.', details);
+    else say('ok', 'Listo: este dispositivo quedó conectado con ' + label + '. Todo estaba al día.', details);
+  }
+
   /* ------------------------------------------------------------ estado */
   async function refresh() {
     if (destroyed) return;
+    syncPairMode();
+    if (joinOnly) return;
     let st, est, meta;
     try { [st, est, meta] = await Promise.all([sync.status(), store.estimate(), store.getMeta()]); }
     catch (_) { return; }
@@ -423,13 +679,31 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
   const api = {
     el: root,
     refresh,
+    /** Llegó un enlace «#conectar=…»: el código queda pegado en «Código», el bloque a la vista y el foco en «Clave». */
+    setPairingCode(code) {
+      if (!pairCard || destroyed) return;
+      codeIn.value = String(code == null ? '' : code);
+      keyIn.value = '';
+      showJoinForm();
+      joinOpen = true;
+      syncPairMode();
+      setTimeout(() => {       // más tarde: el contenedor puede añadirse al documento justo después de montar
+        if (destroyed || !root.isConnected) return;
+        try { joinBox.scrollIntoView({ block: 'start' }); } catch (_) { /* sin scrollIntoView */ }     // el título, el código y la clave a la vista
+        try { keyIn.focus({ preventScroll: true }); } catch (_) { keyIn.focus(); }
+      }, 80);
+    },
     destroy() {
       if (destroyed) return;
       destroyed = true;
       clearInterval(timer); clearTimeout(evTimer);
       if (autosaver && typeof autosaver.removeEventListener === 'function') autosaver.removeEventListener('status', onSaverStatus);
+      wipePair();                                        // el código y la clave no sobreviven a la pantalla
+      showJoinForm();
+      codeIn.value = ''; keyIn.value = '';
       root.remove();
     }
   };
+  if (pairingCode) api.setPairingCode(pairingCode);
   return api;
 }

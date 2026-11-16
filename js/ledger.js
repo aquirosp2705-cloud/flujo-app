@@ -1007,7 +1007,7 @@ const KIND_LABEL = { credit: 'Crédito', debit: 'Débito' };
 const PAGE = 30;
 
 /** Pantalla "Movimientos". host = contenedor; ctx = contexto de la app (engine, changed, openSheet, toast, confirm, modal, ui, today). */
-export function mount(host, ctx, { ledgerId = null } = {}) {
+export function mount(host, ctx, { ledgerId = null, onAdd = null } = {}) {
   const U = ctx.ui || UI, el = U.el, money = U.money;
   const engine = ctx.engine;
   const today = () => (typeof ctx.today === 'function' ? ctx.today() : todaySerial());
@@ -1031,7 +1031,7 @@ export function mount(host, ctx, { ledgerId = null } = {}) {
   const cardId = nid('card'), listId = nid('list');
   const cardEl = el('section', { class: 'card lg-card', 'aria-labelledby': cardId });
   const listEl = el('section', { class: 'card lg-listcard', 'aria-labelledby': listId });
-  const addBtn = el('button', { type: 'button', class: 'btn primary lg-add', 'aria-label': 'Nuevo movimiento', onclick: () => openForm({ mode: 'add' }) }, el('span', { 'aria-hidden': 'true', class: 'lg-plus', text: '+' }), ' Movimiento');
+  const addBtn = el('button', { type: 'button', class: 'btn primary lg-add', 'aria-label': 'Nuevo movimiento', onclick: () => (typeof onAdd === 'function' ? onAdd() : openForm({ mode: 'add' })) }, el('span', { 'aria-hidden': 'true', class: 'lg-plus', text: '+' }), ' Movimiento');
   const pasteBtn = el('button', { type: 'button', class: 'btn lg-paste', 'aria-label': 'Pegar texto del banco', title: 'Pegar texto del banco', onclick: () => openPaste() },
     el('span', { class: 'lg-ico', 'aria-hidden': 'true', html: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9z"/><path d="M8.5 12h7M8.5 16h4.5"/></svg>' }),
     el('span', { class: 'lg-paste-short', 'aria-hidden': 'true', text: 'Pegar' }), el('span', { class: 'lg-paste-long', 'aria-hidden': 'true', text: 'Pegar texto del banco' }));
@@ -1040,6 +1040,7 @@ export function mount(host, ctx, { ledgerId = null } = {}) {
   host.append(root);
 
   /* ---------- carga y dibujo ---------- */
+  let wantAdd = false;            // add() pedido antes de que la cuenta terminara de cargar
   function load() {
     if (st.destroyed || !st.L) return;
     try {
@@ -1051,6 +1052,7 @@ export function mount(host, ctx, { ledgerId = null } = {}) {
     st.index = null;
     renderCard(); renderList();
     listeners.forEach((fn) => { try { fn(); } catch (e) { console.warn(e); } });
+    if (wantAdd && st.info) { wantAdd = false; openForm({ mode: 'add' }); }
   }
   let pending = false;
   function refresh() { if (st.destroyed || pending) return; pending = true; queueMicrotask(() => { pending = false; load(); }); }
@@ -1471,6 +1473,8 @@ export function mount(host, ctx, { ledgerId = null } = {}) {
 
   return {
     refresh,
+    /** Abre «Nuevo movimiento» de esta cuenta (si aún está cargando, lo abre al terminar). */
+    add() { if (st.destroyed) return; if (st.info) openForm({ mode: 'add' }); else wantAdd = true; },
     destroy() {
       st.destroyed = true;
       timers.forEach((t) => clearTimeout(t)); timers.clear();

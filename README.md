@@ -12,12 +12,12 @@ No necesita Excel, Microsoft 365 ni ningún plan de pago: la app es gratuita (Gi
 |---|---|
 | **Resumen** | Saldos de tus cuentas, provisiones, variación contra el mes anterior y gráfico de patrimonio. |
 | **Movimientos** | Elige una cuenta, mira sus últimos movimientos y agrega uno nuevo (la app escribe en la primera fila libre sin romper fórmulas). |
-| **Registrar** | Accesos rápidos para los registros periódicos que no son movimientos del banco (pago de un préstamo, renovar una póliza, consumos de la tarjeta…). Solo aparecen los de las hojas que tenga tu libro. |
+| **Anotar** (el botón +) | Lista de tus hojas (cuentas y tarjetas): eliges una y el movimiento se anota ahí. Es la misma lista que sale al pulsar «+ Movimiento». |
 | **Hojas** | Las hojas de tu libro, con las mismas fórmulas: edita celdas, copia y pega, rellena hacia abajo, deshaz. |
 | **Buscar** | Busca un texto o valor en todas las hojas a la vez. |
 | **Ajustes** | Sincronización con GitHub, **código de conexión** para enlazar otro dispositivo, exportar a Excel (.xlsx), respaldo (.json), tema claro/oscuro, instalar la app. |
 
-Al instalar la app (Android, Windows, Mac), mantener pulsado o hacer clic derecho en su ícono ofrece atajos: *Anotar un movimiento*, *Registrar un pago* y *Ver el resumen*.
+Al instalar la app (Android, Windows, Mac), mantener pulsado o hacer clic derecho en su ícono ofrece atajos: *Anotar un movimiento* (abre la lista de hojas) y *Ver el resumen*.
 
 En una hoja: toca una celda para seleccionarla, vuelve a tocar (o doble clic / F2) para editar. `Ctrl+Z` deshace, `Ctrl+D` rellena hacia abajo,
 el cuadrito azul de la esquina de la selección arrastra fórmulas, y la barra inferior muestra suma y promedio de lo seleccionado.

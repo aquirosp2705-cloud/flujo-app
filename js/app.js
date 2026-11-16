@@ -301,7 +301,7 @@ function applyTheme() {
 function setTheme(t) { try { localStorage.setItem('fx-theme', t); } catch (e) { /* */ } applyTheme(); }
 
 /* ------------------------------------------------------------------ navegación */
-const TITLES = { resumen: 'Resumen', mov: 'Movimientos', reg: 'Registrar', hojas: 'Hojas', hoja: 'Hoja', buscar: 'Buscar', ajustes: 'Ajustes' };
+const TITLES = { resumen: 'Resumen', mov: 'Movimientos', reg: 'Anotar', hojas: 'Hojas', hoja: 'Hoja', buscar: 'Buscar', ajustes: 'Ajustes' };
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, ''); const [path, qs] = h.split('?'); const parts = path.split('/');
   return { name: parts[0] || 'resumen', arg: parts.slice(1).join('/') || null, q: new URLSearchParams(qs || '') };
@@ -412,8 +412,7 @@ const SCREENS = {
     const sheetRows = movTargets().map((t) => el('li', { style: { cursor: 'pointer' }, 'data-target': t.id, onclick: () => ctx.navigate('mov/' + t.id + '?nuevo=1') },
       el('div', { class: 'grow' }, el('div', { class: 't', text: (t.kind === 'ledger' ? '🏦  ' : '💳  ') + t.label }), el('div', { class: 's', text: t.kind === 'ledger' ? 'Depósito, retiro, pago o transferencia' : 'Consumos y pagos de la tarjeta' })),
       el('span', { class: 'muted', html: '&rsaquo;' })));
-    wrap.append(el('div', { class: 'card' }, el('h2', { text: '¿En qué hoja anotas el movimiento?' }), el('ul', { class: 'list mov-sheets' }, ...sheetRows)));
-    if (Q && Q.mountHub) { const hub = el('div', { style: { marginTop: '12px' } }); wrap.append(hub); return Q.mountHub(hub, ctx, { exclude: ['tcpich', 'produb'] }); }
+    wrap.append(el('div', { class: 'card' }, el('h2', { text: '¿En qué hoja anotas el movimiento?' }), el('p', { class: 'muted', text: 'Elige la hoja: el movimiento se anota ahí.' }), el('ul', { class: 'list mov-sheets' }, ...sheetRows)));
     return {};
   },
   async hojas(host) {

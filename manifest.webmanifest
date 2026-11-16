@@ -10,15 +10,55 @@
   "orientation": "any",
   "theme_color": "#0f5257",
   "background_color": "#ffffff",
-  "categories": ["finance"],
+  "categories": [
+    "finance"
+  ],
   "shortcuts": [
-    { "name": "Anotar un movimiento", "short_name": "Movimiento", "description": "Abre Movimientos para anotar un ingreso o un gasto", "url": "./index.html#/mov", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
-    { "name": "Registrar un pago", "short_name": "Registrar", "description": "Pago del carro, renovación de póliza o consumo de tarjeta", "url": "./index.html#/reg", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
-    { "name": "Ver el resumen", "short_name": "Resumen", "description": "Saldos de tus cuentas", "url": "./index.html#/resumen", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+    {
+      "name": "Anotar un movimiento",
+      "short_name": "Anotar",
+      "description": "Elige la hoja y anota un ingreso o un gasto",
+      "url": "./index.html#/mov?nuevo=1",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Ver el resumen",
+      "short_name": "Resumen",
+      "description": "Saldos de tus cuentas",
+      "url": "./index.html#/resumen",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
   ],
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

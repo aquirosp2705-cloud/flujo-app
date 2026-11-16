@@ -1211,7 +1211,7 @@ export function mountForm(host, ctx, formId) {
     if (S.refreshes === n0) refresh();
     renderLast(res);
     const undoBtn = el('button', { class: 'qk-toast-btn', type: 'button', text: 'Deshacer', onclick: () => undo(res.token) });
-    ctx.toast(el('span', {}, res.label + ' guardado' + (res.rowNumber ? ' en la fila ' + res.rowNumber : '') + '. ', undoBtn), { type: 'ok', ms: 10000 });
+    ctx.toast(el('span', {}, 'Guardado: ' + res.label + (res.rowNumber && !/fila/i.test(res.label) ? ' en la fila ' + res.rowNumber : '') + '. ', undoBtn), { type: 'ok', ms: 10000 });
   }
   function undo(token) {
     const r = form.undoLast(eng(), { token });
@@ -1223,14 +1223,14 @@ export function mountForm(host, ctx, formId) {
   }
   function renderLast(res) {
     const shown = (res.summary && res.summary.length ? res.summary.map((s) => ({ label: s.label, text: s.afterText, beforeText: s.beforeText, before: s.before })) : []).concat(res.computed.filter((c) => c.primary));
-    els.last.replaceChildren(
-      el('h3', { class: 'qk-sub', text: '✓ ' + res.label + ' guardado' + (res.rowNumber ? ' (fila ' + res.rowNumber + ')' : '') }),
+    els.last.replaceChildren(...[
+      el('h3', { class: 'qk-sub', text: '✓ Guardado: ' + res.label + (res.rowNumber && !/fila/i.test(res.label) ? ' (fila ' + res.rowNumber + ')' : '') }),
       shown.length ? cellList(shown) : null,
       (res.extra && res.extra.length) ? summaryList(res.extra) : null,
       (res.warnings || []).filter((w) => w.code === 'calc').length ? el('p', { class: 'neg small', text: res.warnings.filter((w) => w.code === 'calc').map((w) => w.msg).join(' ') }) : null,
       el('div', { class: 'row' },
         el('button', { type: 'button', class: 'btn', text: 'Deshacer', onclick: () => undo(res.token) }),
-        res.row != null ? el('button', { type: 'button', class: 'btn ghost', text: 'Ver en la hoja', onclick: () => ctx.openSheet(res.sid, { r: res.row, c: 0 }) }) : null));
+        res.row != null ? el('button', { type: 'button', class: 'btn ghost', text: 'Ver en la hoja', onclick: () => ctx.openSheet(res.sid, { r: res.row, c: 0 }) }) : null)].filter(Boolean));   // sin hijos nulos: el DOM los escribiría como «null»
     els.last.hidden = false;
   }
   const ui_nextFrame = () => new Promise((r) => { let done = false; const f = () => { if (!done) { done = true; r(); } }; requestAnimationFrame(f); setTimeout(f, 60); });

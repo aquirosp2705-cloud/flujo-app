@@ -146,13 +146,15 @@ function showOnboarding(resolve) {
   };
   const S = state.mods['sync-github'], U = state.mods['settings-ui'];
   const canSync = !!(S && U && state.store);
+  const P = state.mods.pwa, iosHelp = !!(P && P.needsIosInstallHelp && P.needsIosInstallHelp());
   const gh = el('div', { class: 'card', style: { textAlign: 'left', marginTop: '14px' } });
   const joinHost = el('div', { style: { textAlign: 'left', marginTop: '14px' } });     // «Ya tengo un código de conexión»: la opción principal
   extra.append(...[
+    iosHelp ? el('div', { class: 'banner', style: { textAlign: 'left', marginTop: '14px' }, text: 'En iPhone: primero toca Compartir y «Añadir a pantalla de inicio», abre Flujo desde su ícono y recién ahí conecta con el código. Si conectas aquí y luego la instalas, la app instalada empezará vacía.' }) : null,
     canSync ? joinHost : null,
     canSync ? el('p', { class: 'muted small', style: { margin: '18px 0 0' }, text: '¿No tienes un código? Hay otras formas de traer tus datos (con más pasos):' }) : null,
     el('div', { class: 'row', style: { justifyContent: 'center', marginTop: canSync ? '10px' : '12px' } },
-      el('button', { class: canSync ? 'btn' : 'btn primary', text: 'Traer desde GitHub', onclick: () => { gh.hidden = !gh.hidden; } }),
+      el('button', { class: canSync ? 'btn' : 'btn primary', text: 'Conectar con mi cuenta de GitHub (más pasos)', onclick: (e) => { gh.hidden = !gh.hidden; e.currentTarget.setAttribute('aria-expanded', String(!gh.hidden)); if (!gh.hidden) gh.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }),
       (() => {
         const f = el('input', { type: 'file', accept: '.json,application/json', hidden: true });
         f.addEventListener('change', async () => {
@@ -163,7 +165,7 @@ function showOnboarding(resolve) {
             await finish({ meta: obj.meta, sheetDatas: obj.sheetDatas });
           } catch (e) { toast('No se pudo leer el respaldo: ' + e.message, { type: 'error' }); }
         });
-        return el('span', {}, f, el('button', { class: 'btn', text: 'Cargar un respaldo (.json)', onclick: () => f.click() }));
+        return el('span', {}, f, el('button', { class: 'btn', text: 'Cargar un respaldo (archivo)', onclick: () => f.click() }));
       })()),
     gh].filter(Boolean));
   gh.hidden = true;
@@ -187,7 +189,7 @@ async function startWithBundle(bundle) {
   const S = state.mods['sync-github'], St = state.mods.store;
   if (St && state.store) {
     try {
-      state.saver = new St.AutoSaver(state.engine, state.store, { delayMs: 1500, onStatus: (s, info) => { state.saveStatus = s; updatePill(); if (s === 'saved') afterSaved(); } });
+      state.saver = new St.AutoSaver(state.engine, state.store, { delayMs: 500, onStatus: (s, info) => { state.saveStatus = s; updatePill(); if (s === 'saved') afterSaved(); } });
     } catch (e) { console.warn('AutoSaver no disponible', e); }
   }
   if (S && state.store && !state.sync) { try { state.sync = new S.GithubSync(state.store, {}); } catch (e) { console.warn(e); } }
@@ -198,7 +200,10 @@ async function startWithBundle(bundle) {
   window.addEventListener('hashchange', onHashChange);
   window.addEventListener('online', () => { state.online = true; updatePill(); autoSync(); });
   window.addEventListener('offline', () => { state.online = false; updatePill(); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') autoSync(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') autoSync();
+    else if (document.visibilityState === 'hidden') { clearTimeout(pushTimer); autoPush(); }   // el celular se bloquea: se intenta subir lo pendiente antes de que suspenda la app
+  });
   setInterval(() => { if (document.visibilityState === 'visible') autoSync(); }, 5 * 60 * 1000);
   $('#syncPill').addEventListener('click', onPill);
   if (!state.store) toast('Sin almacenamiento local: los cambios NO se guardarán al cerrar.', { type: 'warn', ms: 8000 });
@@ -226,7 +231,7 @@ function syncOn() { try { return !!(state.sync && state.sync.isConfigured()); } 
 function afterSaved() {
   if (!syncOn()) return;
   clearTimeout(pushTimer);
-  pushTimer = setTimeout(() => autoPush(), 15000);                  // se sube unos segundos después del último cambio
+  pushTimer = setTimeout(() => autoPush(), 4000);                   // se sube unos segundos después del último cambio
 }
 async function autoPush() {
   if (!syncOn() || !state.online || state.pushing) return;

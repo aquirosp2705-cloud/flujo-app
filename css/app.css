@@ -36,7 +36,7 @@ h1, h2, h3 { line-height: 1.2; margin: 0; }
 .bar > i { display: block; height: 100%; width: 0; background: var(--pri); transition: width .2s; }
 
 /* ---------- estructura ---------- */
-#app { display: grid; grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; height: 100%; min-height: 0; }
+#app { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr auto; height: 100%; min-height: 0; }
 .side { display: none; }
 .top { display: flex; min-width: 0; align-items: center; gap: 10px; padding: calc(8px + var(--safe-t)) 14px 8px; min-height: var(--top-h); background: var(--pri); color: var(--pri-ink); position: relative; z-index: 5; }
 :root[data-theme="dark"] .top, :root:not([data-theme="light"]) .top { }
@@ -56,7 +56,7 @@ main#screens { min-height: 0; overflow: hidden; position: relative; display: fle
 .tabs a.on svg { stroke-width: 2.2; }
 
 @media (min-width: 900px) {
-  #app { grid-template-columns: var(--side-w) 1fr; grid-template-rows: 1fr; }
+  #app { grid-template-columns: var(--side-w) minmax(0, 1fr); grid-template-rows: 1fr; }
   .side { display: flex; flex-direction: column; gap: 4px; padding: 18px 12px; background: var(--card); border-right: 1px solid var(--line); }
   .side .brand { font-size: 22px; font-weight: 800; color: var(--pri); padding: 4px 10px 16px; letter-spacing: -.5px; }
   .side a { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 10px; text-decoration: none; color: var(--ink); font-weight: 550; }
@@ -166,3 +166,9 @@ table.t td.r, table.t th.r { text-align: right; }
 
 .sheet-hint { padding: 7px 12px; font-size: 13px; color: var(--muted); background: var(--soft); border-bottom: 1px solid var(--line); }
 .sheet-hint b { color: var(--ink); }
+
+/* v9: objetivos táctiles de 44 px, letra de 16 px en celular (iOS no hace zoom al enfocar) y área segura en el arranque */
+.btn, .chip, .seg button { min-height: 44px; }
+.icon-btn { width: 44px; height: 44px; }
+@media (max-width: 899px) { .field input, .field select, .field textarea, .sheetbar select { font-size: 16px; } }
+#boot { padding-bottom: calc(24px + var(--safe-b)); }

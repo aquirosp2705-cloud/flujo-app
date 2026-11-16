@@ -132,7 +132,7 @@ const MSG_PUBLIC = 'El repositorio de datos es PÚBLICO: cualquiera podría leer
 
 // Exportadas para que js/pairing.js (código de conexión) valide con EXACTAMENTE las mismas reglas que usa este módulo.
 export const RE_OWNER = /^[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?$/;
-export const RE_REPO = /^[A-Za-z0-9._-]{1,100}$/;
+export const RE_REPO = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,100}$/;
 export const RE_BRANCH = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/;
 export const RE_TOKEN = /^[\x21-\x7E]{4,255}$/;
 

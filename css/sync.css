@@ -243,3 +243,8 @@
 @media (prefers-reduced-motion: no-preference) {
   .fx-btn { transition: border-color 0.12s, filter 0.12s; }
 }
+
+/* v9: objetivos táctiles de 44 px y letra de 16 px (iOS no hace zoom) */
+.fx-btn, .fx-link, .fx-btn--small { min-height: 44px; }
+.fx-input { min-height: 44px; font-size: 16px; }
+@media (max-width: 560px) { .fx-btn { min-height: 48px; } .fx-confirm .fx-actions { gap: 12px; } }

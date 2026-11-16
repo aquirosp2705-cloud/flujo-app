@@ -54,3 +54,6 @@
   .fxg-more { display: inline-flex; align-items: center; justify-content: center; }
   .fxg-fx { display: none; }
 }
+
+/* v9: la celda activa y la barra de fórmula (donde se escribe en el celular) con 16 px: iOS no hace zoom al enfocarlas */
+@media (max-width: 899px) { .fxg-name, .fxg-formula { font-size: 16px; } }

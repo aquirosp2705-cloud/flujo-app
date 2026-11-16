@@ -166,7 +166,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
   const outBox = h('div', { class: 'fx-pair__out', hidden: true, 'data-fx': 'pair-out' },
     h('p', { class: 'fx-label' }, 'Clave'),
     keyOut,
-    h('p', { class: 'fx-hint' }, 'Anótala o léela de esta pantalla: no se guarda en ningún sitio.'),
+    h('p', { class: 'fx-hint' }, 'Anótala o léela de esta pantalla: no se guarda en ningún sitio. No la envíes por el mismo chat o correo que el código ni hagas una captura que incluya los dos.'),
     h('label', { class: 'fx-label', for: codeOut.id }, 'Código'),
     codeOut,
     h('div', { class: 'fx-actions' }, copyCodeBtn, copyLinkBtn, shareBtn),
@@ -174,11 +174,11 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
       h('li', {}, 'Envíate el código por WhatsApp (chat contigo mismo) o por correo.'),
       h('li', {}, 'En el otro dispositivo abre Flujo y busca «Ya tengo un código de conexión».'),
       h('li', {}, 'Pega el código y escribe la clave.')),
-    h('p', { class: 'fx-note' }, 'Sin la clave, el código no sirve. Para cortar el acceso de un dispositivo, borra el token en GitHub.'),
+    h('p', { class: 'fx-note' }, 'Sin la clave, el código no sirve. Para cortar el acceso de todos los dispositivos enlazados, borra el token en GitHub (Settings → Developer settings → Fine-grained tokens).'),
     h('div', { class: 'fx-actions' }, hideBtn));
   const createBox = joinOnly ? null : h('div', { class: 'fx-create', 'data-fx': 'create' },
     h('h3', { class: 'fx-h3' }, 'Usar en otro dispositivo'),
-    h('p', { class: 'fx-pair__lead' }, 'Conecta tu celular u otro computador con esta misma información, sin crear otro token en GitHub: este dispositivo genera un código y una clave.'),
+    h('p', { class: 'fx-pair__lead' }, 'Conecta otro celular o computador con tus mismos datos, sin volver a entrar a GitHub. Aquí obtienes un código y una clave; en el otro dispositivo los escribes.'),
     h('div', { class: 'fx-actions' }, createBtn),
     createSlot,
     outBox,
@@ -188,6 +188,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
   const codeIn = h('textarea', { class: 'fx-input fx-input--code', id: uid + '-pair-code', rows: '3', autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', placeholder: 'FLUJO1.…', 'data-fx': 'join-code' });
   const keyIn = h('input', { class: 'fx-input fx-input--key', id: uid + '-pair-key', type: 'text', name: 'fx-pair-key', autocomplete: 'off', autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go', maxlength: '30', placeholder: 'XXXX-XXXX-XXXX', 'data-fx': 'join-key' });
   const joinBtn = btn('Conectar este dispositivo', 'fx-btn--primary', () => run(doJoin, joinSlot), { 'data-fx': 'join-go' });
+  for (const i of [codeIn, keyIn]) i.addEventListener('input', () => { if (msgBox.parentNode === joinSlot) clearMsg(); });
   keyIn.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); if (!busy) joinBtn.click(); } });
   const confirmQ = h('p', { class: 'fx-confirm__q', id: uid + '-confirm-q', 'data-fx': 'join-question' });
   const confirmInfo = h('p', { class: 'fx-confirm__info', 'data-fx': 'join-info' });
@@ -206,7 +207,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
   const joinForm = h('div', { class: 'fx-join__form' }, codeField, keyField, h('div', { class: 'fx-actions' }, joinBtn));
   const joinBox = h('div', { class: 'fx-join', id: uid + '-join', 'data-fx': 'join' },
     h(joinOnly ? 'h2' : 'h3', { class: 'fx-h3' }, 'Ya tengo un código de conexión'),         // en la pantalla de primer uso es el título principal
-    h('p', { class: 'fx-pair__lead' }, 'Si ya usas Flujo en otro dispositivo, crea allí el código (Ajustes → «Usar en otro dispositivo») y pégalo aquí. No necesitas crear un token en GitHub.'),
+    h('p', { class: 'fx-pair__lead' }, 'Si ya usas Flujo en otro celular o computador: allí abre Ajustes → «Usar en otro dispositivo» y pulsa «Crear código de conexión»; envíate el código por WhatsApp o correo, pégalo aquí y escribe la clave que se ve en esa pantalla. No tienes que volver a entrar a GitHub.'),
     joinForm, confirmBox, joinSlot);
   const pairCard = withPairing ? h('div', { class: 'fx-card fx-pair', 'data-fx': 'pair-card' }, createBox, joinBox) : null;
   actionBtns.push(createBtn, joinBtn, yesBtn, noBtn, pasteLink);
@@ -271,6 +272,8 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
       })));
     }
     msgBox.hidden = false;
+    msgBox.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    requestAnimationFrame(() => { try { msgBox.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (_) { /* sin scrollIntoView */ } });
   };
   const clearMsg = () => { msgBox.hidden = true; msgBox.replaceChildren(); };
   const explain = (e) => {
@@ -535,7 +538,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     if (!issued) return;
     const ok = await copyText(what === 'link' ? issued.link : issued.code);
     if (ok) {
-      sayAt(createSlot, 'ok', what === 'link' ? 'Enlace copiado. Ábrelo en el otro dispositivo y escribe la clave.' : 'Código copiado. Pégalo en un mensaje para ti (WhatsApp o correo).');
+      sayAt(createSlot, 'ok', what === 'link' ? 'Enlace copiado. Pégalo en la barra de direcciones de Safari o Chrome (no lo abras desde WhatsApp) y escribe la clave.' : 'Código copiado. Pégalo en un mensaje para ti (WhatsApp o correo).');
     } else {
       if (what === 'code') { codeOut.focus(); codeOut.select(); }
       sayAt(createSlot, 'warn', what === 'code'
@@ -546,12 +549,13 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
 
   async function doShare() {
     if (!issued || typeof navigator.share !== 'function') return;
-    try { await navigator.share({ title: 'Código de conexión de Flujo', text: issued.code }); }      // solo el código: la clave nunca se comparte
+    try { await navigator.share({ title: 'Código de conexión de Flujo', text: 'Código de conexión de Flujo:\n' + issued.code }); }      // solo el código: la clave nunca se comparte
     catch (e) { if (!(e && e.name === 'AbortError')) sayAt(createSlot, 'warn', 'No se pudo abrir el menú de compartir. Usa «Copiar código».'); }
   }
 
   /** Vuelve al formulario (y suelta de memoria el código ya abierto, que lleva el token). */
   function showJoinForm() {
+    yesBtn.textContent = 'Sí, es mi cuenta: conectar';
     if (pending) pending.token = '';
     pending = null;
     confirmBox.hidden = true;
@@ -575,11 +579,20 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     const cur = sync.getConfig();
     const lc = (s) => String(s || '').toLowerCase();
     const when = ago(opened.createdAt);
-    confirmQ.replaceChildren('Conectar con ', h('b', {}, opened.owner + '/' + opened.repo));
-    confirmInfo.textContent = 'Rama «' + opened.branch + '». Código creado el ' + fmtDate(opened.createdAt) + (when ? ' (' + when + ')' : '') + '.';
-    confirmWarn.textContent = 'Sigue solo si reconoces esta cuenta de GitHub. Si alguien más te envió este código, tus datos podrían terminar en la cuenta de esa persona.' +
-      (sync.isConfigured() && !(lc(cur.owner) === lc(opened.owner) && lc(cur.repo) === lc(opened.repo))
-        ? ' Este dispositivo está conectado ahora con ' + cur.owner + '/' + cur.repo + ': esa conexión se reemplazará.' : '');
+    const label = opened.owner + '/' + opened.repo;
+    let nSheets = 0;
+    try { nSheets = (await store.listSheetIds()).length; } catch (_) { /* sin dato: no se muestra el aviso */ }
+    const connected = sync.isConfigured();
+    const sameRepo = connected && lc(cur.owner) === lc(opened.owner) && lc(cur.repo) === lc(opened.repo);
+    const otherAccount = connected && lc(cur.owner) !== lc(opened.owner);
+    confirmQ.replaceChildren('Conectar con ', h('b', {}, label));
+    confirmInfo.textContent = (opened.branch && opened.branch !== 'main' ? 'Rama «' + opened.branch + '». ' : '') + 'Código creado el ' + fmtDate(opened.createdAt) + (when ? ' (' + when + ')' : '') + '.';
+    const warn = ['Sigue solo si reconoces esta cuenta de GitHub. Si alguien más te envió este código, tus datos podrían terminar en la cuenta de esa persona.'];
+    if (otherAccount) warn.unshift('¡Es OTRA cuenta distinta de la que usas ahora (' + cur.owner + ')! Este dispositivo tiene ' + plural(nSheets, 'hoja', 'hojas') + ' y al conectar se subirán TODAS a ' + label + '.');
+    else if (connected && !sameRepo) warn.push('Este dispositivo está conectado ahora con ' + cur.owner + '/' + cur.repo + ': esa conexión se reemplazará.');
+    if (!connected && nSheets > 0) warn.push('Este dispositivo ya tiene ' + plural(nSheets, 'hoja', 'hojas') + '. Las que existan en ' + label + ' se reemplazarán por las de allí y las que no estén allí se borrarán de aquí. Antes descarga un respaldo (Ajustes → «Descargar respaldo»).');
+    confirmWarn.textContent = warn.join(' ');
+    yesBtn.textContent = otherAccount ? 'Sí, cambiar a esta cuenta' : 'Sí, es mi cuenta: conectar';
     joinForm.hidden = true;
     confirmBox.hidden = false;
     confirmBox.focus();
@@ -589,39 +602,41 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
   async function doJoinConfirmed() {
     const p = pending;
     if (!p) { showJoinForm(); return; }
-    const label = p.owner + '/' + p.repo;
+    const { owner, repo, branch, token } = p;        // copia local: la pantalla puede cerrarse mientras se prueba la conexión y vaciar «pending»
+    const label = owner + '/' + repo;
+    yesBtn.textContent = 'Conectando…';
     let probe;
     try {          // instancia aparte: un código viejo o ajeno no deja un token malo guardado ni pisa la conexión que ya funcionaba
       onProgress({ message: 'Probando la conexión con GitHub…' });
-      probe = await new GithubSync(store, { owner: p.owner, repo: p.repo, branch: p.branch, token: p.token, apiBase: sync.getConfig().apiBase }).testConnection();
+      probe = await new GithubSync(store, { owner, repo, branch, token, apiBase: sync.getConfig().apiBase }).testConnection();
     } catch (e) { say('error', explain(e)); showJoinForm(); return; }
     if (!probe.ok) {
-      const details = probe.checks.slice();
-      for (const w of probe.warnings) details.push({ ok: false, text: w });
-      let text = probe.message;
-      if (probe.code === 'BAD_TOKEN') text = 'El código ya no sirve: GitHub rechazó el token que trae (venció o fue revocado). Crea un código nuevo en el dispositivo donde ya usas Flujo.';
-      else if (probe.code === 'NOT_FOUND') text = 'No se encontró el repositorio «' + label + '», o el token del código ya no tiene acceso a él. Crea un código nuevo en el dispositivo donde ya usas Flujo.';
+      let text = probe.message, details = null;
+      if (probe.code === 'BAD_TOKEN') text = 'Este código ya no sirve: el permiso de acceso que trae venció o fue cancelado en GitHub. Crea un código nuevo en el dispositivo donde ya usas Flujo.';
+      else if (probe.code === 'NOT_FOUND') text = 'No se encontró «' + label + '», o el permiso del código ya no llega hasta él. Crea un código nuevo en el dispositivo donde ya usas Flujo.';
+      else if (probe.code !== 'PUBLIC_REPO' && probe.code !== 'NETWORK') { details = probe.checks.slice(); for (const w of probe.warnings) details.push({ ok: false, text: w }); }
       say(probe.code === 'PUBLIC_REPO' ? 'warn' : 'error', text, details);
       showJoinForm();
       return;
     }
-    sync.setConfig({ owner: p.owner, repo: p.repo, branch: p.branch, token: p.token });
-    await sync.saveConfig();                       // el token queda solo en IndexedDB
-    ownerIn.value = p.owner; repoIn.value = p.repo; branchIn.value = p.branch; tokenIn.value = '';
-    showJoinForm();                                // suelta la copia en memoria del token
+    if (destroyed) return;                           // la persona salió de la pantalla: no se cambia nada
+    sync.setConfig({ owner, repo, branch, token });
+    await sync.saveConfig();                         // el token queda solo en IndexedDB
+    ownerIn.value = owner; repoIn.value = repo; branchIn.value = branch; tokenIn.value = '';
+    codeIn.value = ''; keyIn.value = '';             // ya cumplieron su trabajo
+    showJoinForm();                                  // suelta la copia en memoria del token
     await flushLocal();
     let res;
     try { res = await sync.pullAll({ onProgress }); }
     catch (e) {
-      say('error', 'La conexión con ' + label + ' quedó guardada, pero no se pudieron descargar los datos: ' + explain(e) + ' Vuelve a pulsar «Conectar este dispositivo» para reintentar.');
+      say('error', 'La conexión con ' + label + ' quedó guardada, pero no se pudieron descargar los datos: ' + explain(e) + ' Vuelve a pegar el código y la clave para reintentar.');
       return;
     }
     const details = [...probe.warnings, ...res.warnings].map((w) => ({ ok: false, text: w }));
     if (res.empty) {
-      say('warn', 'Este dispositivo quedó conectado con ' + label + ', pero el repositorio todavía no tiene datos. Súbelos desde el dispositivo donde los tienes (Ajustes → «Subir todo (primera vez)») y luego vuelve a pulsar «Conectar este dispositivo».', details);
+      say('warn', 'Este dispositivo quedó conectado con ' + label + ', pero el repositorio todavía no tiene datos. Súbelos desde el dispositivo donde los tienes (Ajustes → «Subir todo (primera vez)»).', details);
       return;
     }
-    codeIn.value = ''; keyIn.value = '';           // ya cumplieron su trabajo
     if (res.changed) await replaced('pull', { changed: res.downloaded, via: 'pairing' });
     if (res.conflicts.length) say('warn', plural(res.conflicts.length, 'hoja cambió', 'hojas cambiaron') + ' en GitHub y también en este dispositivo: no se pisó nada. Elige qué versión conservar en «Sincronizar».', details);
     else if (res.changed) say('ok', 'Listo: este dispositivo quedó conectado con ' + label + ' y descargó ' + plural(res.downloaded.length, 'archivo', 'archivos') + '.', details);

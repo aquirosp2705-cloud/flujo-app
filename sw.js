@@ -17,7 +17,7 @@
  */
 'use strict';
 
-const VERSION = 'v8';
+const VERSION = 'v9';
 
 /* "App shell" que se precarga al instalar. Rutas relativas a la carpeta de sw.js. Si algún archivo no existe (todavía)
  * se avisa en la consola pero la instalación sigue: lo importante es que una errata no deje la app sin service worker. */
@@ -101,10 +101,13 @@ self.addEventListener('fetch', (event) => {
 
 const cacheable = (res) => !!res && res.status === 200 && res.type === 'basic';
 
+/** clave de caché sin el «#fragmento»: un enlace …/index.html#conectar=CÓDIGO no debe dejar el código guardado en la caché */
+const cacheKey = (r) => { try { const u = new URL(r.url); u.hash = ''; return u.href; } catch (e) { return r.url; } };
+
 async function store(request, res) {
   if (!cacheable(res)) return;
   const copy = res.clone();                                     // se clona ANTES de que la página lea el cuerpo
-  try { await (await caches.open(CACHE_NAME)).put(request, copy); } catch (e) { /* cuota llena o Vary:* -> sin copia */ }
+  try { await (await caches.open(CACHE_NAME)).put(cacheKey(request), copy); } catch (e) { /* cuota llena o Vary:* -> sin copia */ }
 }
 
 async function fromCache(request, isNavigation) {

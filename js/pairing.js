@@ -213,9 +213,8 @@ function extractCode(input) {
  * @returns {Promise<{owner:string, repo:string, branch:string, token:string, createdAt:string}>}
  * @throws {PairingError} FORMAT · KEY · INVALID · UNSUPPORTED (ver el constructor)
  */
-export async function openCode(code, key) {
+async function openText(text, key) {
   const c = webcrypto();
-  const text = extractCode(code);
   const body = text.slice(PREFIX.length);
   const bytes = fromBase64url(body);
   if (!bytes || bytes.length < SALT_BYTES + IV_BYTES + TAG_BYTES + 1) throw new PairingError('FORMAT', MSG.garbled);   // cortado de forma evidente
@@ -241,7 +240,52 @@ export async function openCode(code, key) {
   const { o, r, b, t, c: created } = obj;
   const bad = badField(o, r, b, t, { owner: MSG.invalidContent, repo: MSG.invalidContent, branch: MSG.invalidContent, token: MSG.invalidContent });
   if (bad || typeof created !== 'string' || created.length > 40 || Number.isNaN(Date.parse(created))) throw new PairingError('INVALID', MSG.invalidContent);
-  return { owner: o, repo: r, branch: b, token: t, createdAt: created };
+  return { owner: o, repo: r, branch: b, token: t, createdAt: new Date(created).toISOString() };     // normalizada: nunca texto libre del código
+}
+
+/**
+ * Candidatos cuando alguien pega el código JUNTO con otro texto (firma del correo, «Clave: …», «gracias»): prefijos del código
+ * formados con los fragmentos separados por espacios, del más largo al más corto, cortando en lo que no sea base64url.
+ */
+function trimmedCandidates(input) {
+  if (typeof input !== 'string' || input.length > MAX_INPUT) return [];
+  let s = input;
+  const at = s.indexOf(LINK_MARK);
+  if (at >= 0) s = s.slice(at + LINK_MARK.length);
+  s = s.replace(/[​-‍⁠﻿]+/g, '');
+  const first = s.indexOf(PREFIX);
+  if (first < 0) return [];
+  const frags = s.slice(first).split(/\s+/).filter(Boolean).slice(0, 12);
+  const out = [];
+  let acc = '';
+  for (let i = 0; i < frags.length; i++) {
+    const f = frags[i].replace(/[^A-Za-z0-9_-]+$/, '');
+    if (i > 0 && !/^[A-Za-z0-9_-]+$/.test(f)) break;              // lo que no es base64url corta el código
+    acc += f;
+    if (i > 0 || acc.length > PREFIX.length) out.push(acc);
+  }
+  return [...new Set(out)].reverse().slice(0, 8);
+}
+
+/**
+ * Descifra el código con la clave.
+ * @param {string} code el código, o un enlace completo que lo contenga
+ * @param {string} key la clave tal como la escribió la persona
+ * @returns {Promise<{owner:string, repo:string, branch:string, token:string, createdAt:string}>}
+ * @throws {PairingError} FORMAT · KEY · INVALID · UNSUPPORTED (ver el constructor)
+ */
+export async function openCode(code, key) {
+  const first = extractCode(code);
+  try { return await openText(first, key); }
+  catch (e) {
+    if (!(e instanceof PairingError) || (e.code !== 'KEY' && e.code !== 'FORMAT')) throw e;
+    for (const alt of trimmedCandidates(code)) {                  // texto extra pegado después del código
+      if (alt === first) continue;
+      try { return await openText(alt, key); }
+      catch (e2) { if (!(e2 instanceof PairingError) || e2.code === 'INVALID' || e2.code === 'UNSUPPORTED') throw e2; }
+    }
+    throw e;
+  }
 }
 
 /* ------------------------------------------------------------------------------------------------ enlaces */
@@ -252,6 +296,7 @@ export function codeFromHash(hash) {
   let v = hash.slice(LINK_MARK.length);
   try { v = decodeURIComponent(v); } catch (_) { /* se deja como vino */ }
   v = v.trim();
+  if (v.length > MAX_INPUT) return null;                                                  // un fragmento absurdamente largo no puede ser un código
   return v || null;
 }
 

@@ -131,3 +131,7 @@
   .qk-card:active, .qk-op:active { transform: none; }
   .qk-st-load .qk-dot { animation: none; }
 }
+
+/* v9: los avisos no tapan la barra de botones de los formularios */
+body:has(.qk-bar) #toasts { bottom: calc(var(--nav-h) + var(--safe-b) + 92px); }
+@media (min-width: 900px) { body:has(.qk-bar) #toasts { bottom: 96px; } }

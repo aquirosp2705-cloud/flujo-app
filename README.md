@@ -10,7 +10,7 @@ No necesita Excel, Microsoft 365 ni ningún plan de pago: la app es gratuita (Gi
 
 | Pantalla | Para qué sirve |
 |---|---|
-| **Resumen** | Saldos de tus cuentas, provisiones, variación contra el mes anterior y gráfico de patrimonio. |
+| **Resumen** | Saldos de tus cuentas, **inversiones (total y total por banco, con sus vencimientos)**, provisiones, variación contra el mes anterior y gráfico de patrimonio. |
 | **Movimientos** | Elige una cuenta, mira sus últimos movimientos y agrega uno nuevo (la app escribe en la primera fila libre sin romper fórmulas). |
 | **Anotar** (el botón +) | Lista de tus hojas (cuentas y tarjetas): eliges una y **se abre esa hoja en la primera fila libre**, lista para escribir el movimiento. Es la misma lista que sale al pulsar «+ Movimiento». |
 | **Hojas** | Las hojas de tu libro, con las mismas fórmulas: edita celdas, copia y pega, rellena hacia abajo, deshaz. |
@@ -73,6 +73,7 @@ esa copia es la que se sube al repositorio privado. Al abrir la app, cada dispos
 * `js/pairing.js` — código de conexión para enlazar dispositivos (PBKDF2-SHA256 + AES-256-GCM con WebCrypto; formato documentado en el encabezado del archivo).
 * `tools/` — `convert.py` (Excel → datos), `drop_sheets.py` (quitar hojas), `publish.py` (publicar app y datos), `make_icons.py`.
 * `js/ledger.js`, `js/dashboard.js`, `js/quick.js` — movimientos bancarios, resumen y capturas rápidas.
+* `js/invest.js` — tarjeta «Inversiones» del Resumen: lee las pólizas de la hoja de pólizas y suma el total invertido y el total por banco (con los ahorros a plazo aparte y la explicación de por qué el patrimonio cuenta menos).
 * `js/export.js` — exportación a `.xlsx` y respaldo `.json`. `js/pwa.js` + `sw.js` — instalación y modo sin conexión.
 * `test/` — páginas de prueba que se abren en el navegador (`test/verify.html` compara el motor con los valores calculados por Excel: 28 901 de 28 908 fórmulas iguales, 99,98 %).
 

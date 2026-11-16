@@ -31,6 +31,7 @@
 import { a1ToAddr, colLetter } from './engine.js';
 import { el, money, monthText } from './ui.js';
 import { parseInput, serialToDate, todaySerial } from './format.js';
+import { renderInvest } from './invest.js';
 
 export const SID = 's01';                      // hoja CONSOL
 const EPS = 0.005;                             // tolerancia de "cero" para dinero (medio centavo)
@@ -700,12 +701,13 @@ export function mount(host, ctx, opts = {}) {
   const secHero = el('section', { class: 'db-hero', 'aria-labelledby': 'db-hero-l' });
   const secActions = el('div', { class: 'db-actions', role: 'group', 'aria-label': 'Accesos rápidos' });
   const secBanks = el('section', { class: 'db-banks', 'aria-labelledby': 'db-banks-h' });
+  const secInvest = el('section', { class: 'card db-invest', 'aria-labelledby': 'db-inv-h', hidden: true });
   const secProv = el('section', { class: 'card db-prov', 'aria-labelledby': 'db-prov-h' });
   const secChart = el('section', { class: 'card db-chart', 'aria-labelledby': 'db-chart-h' });
   const secRecent = el('section', { class: 'card db-recent', 'aria-labelledby': 'db-recent-h', hidden: true });
   const top = el('div', { class: 'db-top' }, secHero, secActions, secBanks);                 // móvil: en este orden; escritorio: ver las áreas de la cuadrícula en el CSS
   const main = el('div', { class: 'db-main' }, secProv, secChart, secRecent);
-  root.append(secDate, secBanners, top, main);
+  root.append(secDate, secBanners, top, secInvest, main);
 
   const eng = () => ctx.engine;
   const notify = (type, msg, ms) => { try { ctx.toast(msg, { type, ms }); } catch (e) { /* nada */ } };
@@ -877,6 +879,15 @@ export function mount(host, ctx, opts = {}) {
     for (const o of s.others) if (!o.missing) grid.append(bankCard(o, false));
     if (!grid.childNodes.length) grid.append(el('p', { class: 'empty', text: 'Sin cuentas para mostrar.' }));
     secBanks.append(grid);
+  }
+
+  /* ---- inversiones (total y total por banco, de la hoja de pólizas; ver invest.js) ---- */
+  function renderInvestments(ok) {
+    if (!ok) { secInvest.hidden = true; return; }
+    let title = '';
+    try { const sh = eng().sheet('s05'); title = sh && ctx.catalog && ctx.catalog.infoFor ? ctx.catalog.infoFor(sh).short : ''; } catch (e) { title = ''; }
+    try { renderInvest(secInvest, eng(), { today: D.summary.month.today, title, openSheet: ctx.openSheet ? (sid) => ctx.openSheet(sid) : null }); }
+    catch (e) { console.warn('[dashboard] inversiones:', e); secInvest.hidden = true; }
   }
 
   /* ---- provisiones ---- */
@@ -1071,7 +1082,7 @@ export function mount(host, ctx, opts = {}) {
     renderDate(); renderBanners(); renderHero(); renderActions();
     top.classList.toggle('solo', !ok);
     secBanks.hidden = !ok;
-    renderBanks(); renderProv();
+    renderBanks(); renderInvestments(ok); renderProv();
     secChart.hidden = !ok;
     if (ok) renderChart();
     renderRecent();

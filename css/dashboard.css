@@ -221,6 +221,29 @@
   .db-chart { grid-area: chart; } .db-prov { grid-area: prov; } .db-recent { grid-area: recent; }
 }
 
+/* ---------- inversiones: total y total por banco (invest.js) ---------- */
+.db-invest { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.db-invest > * { min-width: 0; }                                         /* una pista de la cuadrícula no debe crecer con su contenido (si no, en el celular la tarjeta se sale de la pantalla) */
+.db-invest .db-card-head { margin-bottom: 0; }
+.db-inv-sub, .db-inv-note, .db-inv-warn { margin: 0; }
+.db-inv-warn { color: var(--neg); }
+.db-inv-grid { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+.db-inv-bank { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.db-inv-name { font-size: 13.5px; font-weight: 650; color: var(--muted); overflow-wrap: anywhere; }
+.db-inv-amt { font-size: 1.3rem; font-weight: 750; letter-spacing: -.01em; line-height: 1.2; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.db-inv-due.late { color: var(--neg); font-weight: 650; }
+.db-inv-due.due { font-weight: 650; }
+.db-inv-total { font-size: 1.15rem; font-weight: 750; }
+.db-inv-details { margin-top: 2px; border-top: 1px solid var(--line); padding-top: 8px; }
+.db-inv-details summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--pri); padding: 6px 0; }
+.db-inv-details > p { margin: 4px 0 8px; }
+.db-inv-scroll { overflow-x: auto; }
+.db-inv-table { width: 100%; font-size: 13px; }
+.db-inv-table th[scope="row"] { font-weight: 600; text-align: left; white-space: normal; }    /* los rótulos largos se parten en líneas; el importe queda a la derecha */
+.db-inv-table td.r { text-align: right; white-space: nowrap; vertical-align: top; }
+.db-inv-table tr.tot th, .db-inv-table tr.tot td { font-weight: 700; border-top: 1px solid var(--line); }
+.db-invest .row.end .btn { min-height: 40px; }
+
 /* ---------- impresión y modo de alto contraste: la identidad no depende del color ---------- */
 @media (forced-colors: active), print {
   .db-line { stroke: CanvasText; }

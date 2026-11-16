@@ -12,8 +12,8 @@ No necesita Excel, Microsoft 365 ni ningún plan de pago: la app es gratuita (Gi
 |---|---|
 | **Resumen** | Saldos de tus cuentas, provisiones, variación contra el mes anterior y gráfico de patrimonio. |
 | **Movimientos** | Elige una cuenta, mira sus últimos movimientos y agrega uno nuevo (la app escribe en la primera fila libre sin romper fórmulas). |
-| **Registrar** | Accesos rápidos para los registros periódicos (factura de luz, pensión, pago del carro, renovar una póliza…). |
-| **Hojas** | Las 25 hojas del libro original, con las mismas fórmulas: edita celdas, copia y pega, rellena hacia abajo, deshaz. |
+| **Registrar** | Accesos rápidos para los registros periódicos que no son movimientos del banco (pago de un préstamo, renovar una póliza, consumos de la tarjeta…). Solo aparecen los de las hojas que tenga tu libro. |
+| **Hojas** | Las hojas de tu libro, con las mismas fórmulas: edita celdas, copia y pega, rellena hacia abajo, deshaz. |
 | **Buscar** | Busca un texto o valor en todas las hojas a la vez. |
 | **Ajustes** | Sincronización con GitHub, exportar a Excel (.xlsx), respaldo (.json), tema claro/oscuro, instalar la app. |
 
@@ -46,12 +46,18 @@ Si editas lo mismo en dos dispositivos a la vez, la app te muestra el conflicto 
 python -m http.server 8765          # sirve la carpeta; abre http://localhost:8765/
 python tools/convert.py "Flujo.xlsx" --out data --catalog tools/catalog.private.json    # Excel -> data/
 python tools/publish.py data --owner USUARIO --repo flujo-datos --dry-run               # simula la publicación
+python tools/drop_sheets.py --data COPIA_DE_LOS_DATOS --catalog tools/catalog.private.json --dry-run   # quita hojas que no se usan
 ```
+
+`data/` conserva el libro completo (son los datos de prueba de `test/`). Si no quieres todas las hojas en la app, `tools/drop_sheets.py` las quita de una **copia** de
+los datos —las hojas con `"hide": true` en el catálogo privado, o las que indiques con `--name`— y convierte en valores fijos las pocas fórmulas que dependían de ellas;
+esa copia es la que se sube al repositorio privado. Al abrir la app, cada dispositivo suelta las hojas que `meta.json` ya no lista.
 
 * `js/engine.js` — modelo de hojas y motor de cálculo (HyperFormula) con compatibilidad Excel: `SUMIF` con rangos de distinto tamaño, `VALUE("300,00")`, año bisiesto de 1900, comparaciones con acento. Carga diferida de las hojas "finales".
 * `js/grid.js` — cuadrícula virtualizada tipo hoja de cálculo (teclado, ratón, táctil, portapapeles, relleno, deshacer).
 * `js/format.js` — formatos de número de Excel (SSF) y conversión de lo que se teclea.
 * `js/store.js`, `js/sync-github.js`, `js/settings-ui.js` — almacenamiento local (IndexedDB), sincronización con GitHub y su pantalla de ajustes.
+* `tools/` — `convert.py` (Excel → datos), `drop_sheets.py` (quitar hojas), `publish.py` (publicar app y datos), `make_icons.py`.
 * `js/ledger.js`, `js/dashboard.js`, `js/quick.js` — movimientos bancarios, resumen y capturas rápidas.
 * `js/export.js` — exportación a `.xlsx` y respaldo `.json`. `js/pwa.js` + `sw.js` — instalación y modo sin conexión.
 * `test/` — páginas de prueba que se abren en el navegador (`test/verify.html` compara el motor con los valores calculados por Excel: 99,99 % de coincidencia en 47 302 fórmulas).

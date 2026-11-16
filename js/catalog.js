@@ -7,9 +7,7 @@ export const GROUPS = [
   { id: 'bancos', title: 'Cuentas bancarias', icon: '🏦' },
   { id: 'tarjetas', title: 'Tarjetas de crédito', icon: '💳' },
   { id: 'credito', title: 'Préstamos y pólizas', icon: '📈' },
-  { id: 'servicios', title: 'Servicios y hogar', icon: '💡' },
-  { id: 'viajes', title: 'Viajes', icon: '✈️' },
-  { id: 'otras', title: 'Otras', icon: '📄' },
+  { id: 'otras', title: 'Otras', icon: '📄' },       // las hojas sin entrada en el catálogo; si no hay ninguna, el grupo no se muestra
 ];
 
 let CATALOG = {};

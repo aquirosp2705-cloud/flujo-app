@@ -69,6 +69,9 @@ async function boot() {
   if (state.store && S) { try { state.sync = await S.GithubSync.fromStore(state.store); applyUrlConfig(); } catch (e) { console.warn('[sync] no disponible', e); } }
   if (bundle && syncOn() && navigator.onLine) bundle = await preSync(bundle);     // trae lo que otro dispositivo haya guardado ANTES de armar el motor
   if (!bundle) bundle = await firstRun();
+  if (state.store) {      // hojas que meta.json ya no lista (borradas desde otro dispositivo): se quitan también de este
+    try { for (const id of await state.store.pruneOrphans()) delete bundle.sheetDatas[id]; } catch (e) { console.warn('[store] no se pudieron limpiar las hojas borradas:', e); }
+  }
   await startWithBundle(bundle);
 }
 

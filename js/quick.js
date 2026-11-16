@@ -1091,7 +1091,9 @@ export function mountHub(host, ctx) {
     el('h2', { text: 'Registrar' }),
     el('p', { class: 'muted', text: 'Registros periódicos que no son movimientos del banco. Elige uno y se anota en la fila correcta de su hoja.' })));
   const grid = el('div', { class: 'qk-grid' });
-  for (const f of FORMS) {
+  // solo se ofrecen los formularios cuya hoja existe en este libro (si se borra una hoja, su captura desaparece del menú)
+  const forms = FORMS.filter((f) => !ctx.engine || typeof ctx.engine.sheet !== 'function' || ctx.engine.sheet(f.sid));
+  for (const f of forms) {
     const info = formInfo(f, ctx.engine);
     const st = el('span', { class: 'qk-st qk-st-load' }, el('i', { class: 'qk-dot', 'aria-hidden': 'true', text: '…' }), el('span', { class: 'qk-st-t' }, el('b', { text: 'Calculando…' })));
     const card = el('button', { class: 'qk-card', type: 'button', 'data-form': f.id, onclick: () => ctx.navigate('registrar/' + f.id) },
@@ -1105,7 +1107,7 @@ export function mountHub(host, ctx) {
     const my = ++token, eng = ctx.engine;
     if (!eng) return;
     const today = todayOf(ctx);
-    for (const f of FORMS) {
+    for (const f of forms) {
       const c = cards.get(f.id), sh = eng.sheet(f.sid);
       if (!sh) { renderStatus(c.st, { level: 'off', text: 'No disponible', detail: 'Falta la hoja de este formulario' }); c.card.disabled = true; continue; }
       if (!sh.loaded && eng.loadSheetAsync) { if (!silent) renderStatus(c.st, { level: 'load', text: 'Calculando…' }); await eng.loadSheetAsync(f.sid); }

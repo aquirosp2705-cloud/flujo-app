@@ -420,6 +420,34 @@ export class Store {
     }, { durability: 'strict', action: 'guardar los datos' });
   }
 
+  /**
+   * Quita del almacén local las hojas que meta.json ya no lista (p. ej. se borraron en GitHub desde otro dispositivo):
+   * su contenido y sus rastros en el estado de sincronización (sha base, revisión, pendientes, conflictos).
+   * Sin lista de hojas confiable en meta no borra nada. No toca meta ni las hojas vigentes.
+   * @returns {Promise<string[]>} ids quitados
+   */
+  async pruneOrphans() {
+    return this.tx(['meta', 'sheets', 'kv'], 'readwrite', async (t) => {
+      const meta = await t.get('meta', 'meta');
+      if (!meta || !Array.isArray(meta.sheets) || !meta.sheets.length) return [];
+      const alive = new Set(meta.sheets.map((s) => s.id));
+      const gone = (await t.keys('sheets')).filter((id) => !alive.has(id));
+      if (!gone.length) return [];
+      const [shas0, revs0, pend0, urgent0, conf0] = await Promise.all([
+        t.get('kv', KV.REMOTE_SHAS), t.get('kv', KV.REV), t.get('kv', KV.PENDING), t.get('kv', KV.PENDING_URGENT), t.get('kv', KV.CONFLICTS)]);
+      const without = (o) => { const c = { ...o }; for (const id of gone) delete c[id]; return c; };
+      const keep = (list) => list.filter((id) => !gone.includes(id));
+      const ops = gone.map((id) => t.del('sheets', id));
+      if (shas0) ops.push(t.put('kv', KV.REMOTE_SHAS, without(shas0)));
+      if (revs0) ops.push(t.put('kv', KV.REV, without(revs0)));
+      if (pend0) ops.push(t.put('kv', KV.PENDING, keep(pend0)));
+      if (urgent0 && urgent0.length) ops.push(t.put('kv', KV.PENDING_URGENT, keep(urgent0)));
+      if (conf0) ops.push(t.put('kv', KV.CONFLICTS, without(conf0)));
+      await Promise.all(ops);
+      return gone;
+    }, { durability: 'strict', action: 'limpiar las hojas que ya no existen' });
+  }
+
   /* ---- ajustes (kv) ---- */
 
   async getSetting(key, def = undefined) {

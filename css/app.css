@@ -38,9 +38,9 @@ h1, h2, h3 { line-height: 1.2; margin: 0; }
 /* ---------- estructura ---------- */
 #app { display: grid; grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; height: 100%; min-height: 0; }
 .side { display: none; }
-.top { display: flex; align-items: center; gap: 10px; padding: calc(8px + var(--safe-t)) 14px 8px; min-height: var(--top-h); background: var(--pri); color: var(--pri-ink); position: relative; z-index: 5; }
+.top { display: flex; min-width: 0; align-items: center; gap: 10px; padding: calc(8px + var(--safe-t)) 14px 8px; min-height: var(--top-h); background: var(--pri); color: var(--pri-ink); position: relative; z-index: 5; }
 :root[data-theme="dark"] .top, :root:not([data-theme="light"]) .top { }
-.top h1 { font-size: 18px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 650; }
+.top h1 { font-size: 18px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 650; }
 .top .brand-s { font-weight: 800; letter-spacing: -.3px; opacity: .95; }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 99px; font-size: 12.5px; background: rgba(255,255,255,.16); color: inherit; border: 0; cursor: pointer; white-space: nowrap; }
 .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: #7ee2b8; }
@@ -163,3 +163,6 @@ table.t th, table.t td { padding: 8px 6px; border-bottom: 1px solid var(--line);
 table.t th { color: var(--muted); font-size: 12.5px; font-weight: 650; }
 table.t td.r, table.t th.r { text-align: right; }
 .scrollx { overflow-x: auto; }
+
+.sheet-hint { padding: 7px 12px; font-size: 13px; color: var(--muted); background: var(--soft); border-bottom: 1px solid var(--line); }
+.sheet-hint b { color: var(--ink); }

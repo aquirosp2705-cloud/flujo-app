@@ -143,6 +143,12 @@ export class SheetGrid {
     const r = +m[2] - 1, c = ci(m[1]);
     if (m[3]) this.select(r, c, +m[4] - 1, ci(m[3])); else this.select(r, c);
   }
+  /** Deja la fila r hacia el 62 % de la altura visible: se ven los movimientos anteriores encima y la fila libre queda a mano. */
+  showRowLow(r) {
+    const R = this._cellRect(r, 0), sc = this.scroll;
+    sc.scrollTop = Math.max(0, R.y - Math.round((sc.clientHeight || 400) * 0.62));
+    this._paint(true);
+  }
   goEnd() {
     let r = this.eng.lastConstRow(this.sid);
     if (r < 0) r = 0;

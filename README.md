@@ -12,7 +12,7 @@ No necesita Excel, Microsoft 365 ni ningún plan de pago: la app es gratuita (Gi
 |---|---|
 | **Resumen** | Saldos de tus cuentas, provisiones, variación contra el mes anterior y gráfico de patrimonio. |
 | **Movimientos** | Elige una cuenta, mira sus últimos movimientos y agrega uno nuevo (la app escribe en la primera fila libre sin romper fórmulas). |
-| **Anotar** (el botón +) | Lista de tus hojas (cuentas y tarjetas): eliges una y el movimiento se anota ahí. Es la misma lista que sale al pulsar «+ Movimiento». |
+| **Anotar** (el botón +) | Lista de tus hojas (cuentas y tarjetas): eliges una y **se abre esa hoja en la primera fila libre**, lista para escribir el movimiento. Es la misma lista que sale al pulsar «+ Movimiento». |
 | **Hojas** | Las hojas de tu libro, con las mismas fórmulas: edita celdas, copia y pega, rellena hacia abajo, deshaz. |
 | **Buscar** | Busca un texto o valor en todas las hojas a la vez. |
 | **Ajustes** | Sincronización con GitHub, **código de conexión** para enlazar otro dispositivo, exportar a Excel (.xlsx), respaldo (.json), tema claro/oscuro, instalar la app. |

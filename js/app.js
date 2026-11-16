@@ -20,8 +20,8 @@ const ctx = {
   ui, catalog, today: todaySerial,
   toast, confirm: ui.confirmDialog, modal: ui.openModal, busy: ui.busy,
   navigate(route) { location.hash = '#/' + String(route).replace(/^#?\/?/, ''); },
-  openSheet(sid, { r, c, end } = {}) {
-    const q = new URLSearchParams(); if (r != null) q.set('r', r); if (c != null) q.set('c', c); if (end) q.set('end', 1);
+  openSheet(sid, { r, c, end, nuevo } = {}) {
+    const q = new URLSearchParams(); if (r != null) q.set('r', r); if (c != null) q.set('c', c); if (end) q.set('end', 1); if (nuevo) q.set('nuevo', 1);
     ctx.navigate('hoja/' + sid + (q.toString() ? '?' + q : ''));
   },
   /** Los módulos llaman a esto después de escribir en el motor. */
@@ -348,6 +348,33 @@ function movTargets() {
   return out;
 }
 
+/** Dónde se escribe el siguiente movimiento de una hoja: {sid, r, c} = fila libre y primera columna de captura (base 0), o null. */
+async function entrySpot(t) {
+  const eng = state.engine, L = state.mods.ledger, Q = state.mods.quick;
+  try {
+    if (t.kind === 'ledger' && L && L.ledgerInfo && L.LEDGERS && L.LEDGERS[t.id]) {
+      const d = L.LEDGERS[t.id], info = L.ledgerInfo(eng, t.id, { today: ctx.today() });
+      if (Number.isInteger(info.nextRow)) return { sid: d.sid, r: info.nextRow, c: d.entry ? d.entry[0] : 0 };
+    }
+    if (t.kind === 'form' && Q && Q.getForm && Q.SHEETS && Q.SHEETS[t.id]) {
+      const sid = Q.SHEETS[t.id];
+      if (eng.sheet(sid) && !eng.sheet(sid).loaded && eng.loadSheetAsync) await eng.loadSheetAsync(sid);
+      const p = Q.getForm(t.id).prepare(eng, { today: ctx.today() });
+      if (p && p.ok) {
+        if (t.id === 'produb' && p.card && Number.isInteger(p.card.nextRow)) return { sid, r: p.card.nextRow, c: 6 };   // zona de la tarjeta: columnas G:H
+        if (Number.isInteger(p.nextRow)) return { sid, r: p.nextRow, c: 0 };
+      }
+    }
+  } catch (e) { console.warn('[anotar] no se pudo ubicar la fila libre', e); }
+  return null;
+}
+/** «Anotar» en una hoja: se abre la hoja misma, en la primera fila libre, para escribir directo (como en Excel). */
+async function openForEntry(t) {
+  try { localStorage.setItem('fx-mov-target', t.id); } catch (e) { /* */ }       // al volver a Movimientos se ve esa hoja
+  const spot = await entrySpot(t);
+  if (spot) ctx.openSheet(spot.sid, { r: spot.r, c: spot.c, nuevo: true }); else ctx.navigate('mov/' + t.id);
+}
+
 const SCREENS = {
   async resumen(host) {
     const D = state.mods.dashboard;
@@ -381,24 +408,20 @@ const SCREENS = {
       modal = ctx.modal(el('div', { class: 'mov-choose' }, el('p', { class: 'muted', text: 'Elige la hoja donde quieres anotarlo.' }), ...rows),
         { title: '¿En qué hoja anotas el movimiento?', onClose: () => finish(null) });
     });
-    const addFlow = async () => {
-      const t = await chooseTarget();
-      if (!t) return;
-      if (t.id !== current.id) { select.value = t.id; show(t); }
-      if (child && child.add) child.add();                          // cuenta bancaria: abre «Nuevo movimiento»; tarjeta: su formulario ya está a la vista
-    };
+    const addFlow = async () => { const t = await chooseTarget(); if (t) openForEntry(t); };     // elegida la hoja, se abre la hoja misma
     const show = (t) => {
       if (child && child.destroy) { try { child.destroy(); } catch (e) { console.warn(e); } }
       body.innerHTML = ''; current = t;
       try { localStorage.setItem('fx-mov-target', t.id); } catch (e) { /* */ }
       try { history.replaceState(null, '', '#/mov/' + t.id); } catch (e) { /* */ }
       child = (t.kind === 'ledger' ? L.mount(body, ctx, { ledgerId: t.id, onAdd: addFlow }) : Q.mountForm(body, ctx, t.id)) || null;
+      if (t.kind !== 'ledger') body.append(el('div', { class: 'lg-bar' }, el('button', { type: 'button', class: 'btn primary lg-add', 'aria-label': 'Nuevo movimiento', onclick: addFlow }, el('span', { 'aria-hidden': 'true', class: 'lg-plus', text: '+' }), ' Movimiento')));   // las tarjetas también tienen su «+»
       if (wrap.isConnected) $('#title').textContent = TITLES.mov;
     };
     select.addEventListener('change', () => show(targets.find((t) => t.id === select.value)));
     show(current);
-    if (q && q.get('nuevo')) {                                         // #/mov?nuevo=1 → lista de hojas · #/mov/<hoja>?nuevo=1 → «Nuevo movimiento» de esa hoja
-      if (arg && current.id === arg) { if (child && child.add) child.add(); } else addFlow();
+    if (q && q.get('nuevo')) {                                         // #/mov?nuevo=1 → lista de hojas · #/mov/<hoja>?nuevo=1 → esa hoja, en la fila libre
+      if (arg && current.id === arg) openForEntry(current); else addFlow();
     }
     return { destroy() { if (child && child.destroy) child.destroy(); }, refresh() { if (child && child.refresh) child.refresh(); } };
   },
@@ -409,10 +432,10 @@ const SCREENS = {
       $('#title').textContent = 'Registrar';
       return Q.mountForm(wrap, ctx, arg);
     }
-    const sheetRows = movTargets().map((t) => el('li', { style: { cursor: 'pointer' }, 'data-target': t.id, onclick: () => ctx.navigate('mov/' + t.id + '?nuevo=1') },
+    const sheetRows = movTargets().map((t) => el('li', { style: { cursor: 'pointer' }, 'data-target': t.id, onclick: () => openForEntry(t) },
       el('div', { class: 'grow' }, el('div', { class: 't', text: (t.kind === 'ledger' ? '🏦  ' : '💳  ') + t.label }), el('div', { class: 's', text: t.kind === 'ledger' ? 'Depósito, retiro, pago o transferencia' : 'Consumos y pagos de la tarjeta' })),
       el('span', { class: 'muted', html: '&rsaquo;' })));
-    wrap.append(el('div', { class: 'card' }, el('h2', { text: '¿En qué hoja anotas el movimiento?' }), el('p', { class: 'muted', text: 'Elige la hoja: el movimiento se anota ahí.' }), el('ul', { class: 'list mov-sheets' }, ...sheetRows)));
+    wrap.append(el('div', { class: 'card' }, el('h2', { text: '¿En qué hoja anotas el movimiento?' }), el('p', { class: 'muted', text: 'Elige la hoja: se abre en la primera fila libre para que escribas el movimiento.' }), el('ul', { class: 'list mov-sheets' }, ...sheetRows)));
     return {};
   },
   async hojas(host) {
@@ -480,14 +503,17 @@ async function openGridIn(host, sidOrName, q) {
   const select = el('select', { 'aria-label': 'Cambiar de hoja' });
   for (const s of eng.sheets) { const hid = catalog.isHiddenSheet(s); if (hid && s.id !== sh.id && !state.showHidden) continue; select.append(el('option', { value: s.id, text: catalog.infoFor(s).short + (hid ? ' (oculta)' : ''), selected: s.id === sh.id })); }
   select.addEventListener('change', () => { const info = catalog.infoFor(eng.sheet(select.value)); ctx.openSheet(select.value, { end: info.end }); });
-  const bar = el('div', { class: 'sheetbar' }, el('button', { class: 'btn ghost', 'aria-label': 'Volver a Hojas', html: '&lsaquo; Hojas', onclick: () => ctx.navigate('hojas') }), select);
+  const nuevo = q.get('nuevo') === '1';                    // llegó desde «Anotar»: viene con la fila libre ya seleccionada
+  const bar = el('div', { class: 'sheetbar' }, el('button', { class: 'btn ghost', 'aria-label': nuevo ? 'Volver a Anotar' : 'Volver a Hojas', html: nuevo ? '&lsaquo; Anotar' : '&lsaquo; Hojas', onclick: () => ctx.navigate(nuevo ? 'reg' : 'hojas') }), select);
   const gwrap = el('div', { class: 'sheetwrap' });
-  wrap.append(bar, gwrap); host.append(wrap);
+  const hint = nuevo && q.get('r') != null ? el('div', { class: 'sheet-hint', role: 'status' }, el('b', { text: 'Fila ' + (+q.get('r') + 1) + ' (la primera libre): ' }), 'escribe ahí el movimiento. El saldo se calcula solo.') : null;
+  wrap.append(...[bar, hint, gwrap].filter(Boolean)); host.append(wrap);
   const grid = new SheetGrid(gwrap, eng, { onChange: () => ctx.changed([sh.id], 'grid'), onFind: () => ctx.navigate('buscar'), onToast: (m) => toast(m) });
   const info = catalog.infoFor(sh);
   const r = q.get('r'), c = q.get('c');
   if (host.isConnected) $('#title').textContent = info.short;
   grid.open(sh.id, { end: q.get('end') === '1' || (r == null && info.end), r: r != null ? +r : undefined, c: c != null ? +c : undefined });
+  if (nuevo && r != null) grid.showRowLow(+r);              // se ven los movimientos anteriores encima de la fila libre
   state.grid = grid;
   return { destroy() { grid.commitPending(); grid.destroy(); }, refresh() { grid.refresh(); } };
 }

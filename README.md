@@ -10,7 +10,7 @@ No necesita Excel, Microsoft 365 ni ningún plan de pago: la app es gratuita (Gi
 
 | Pantalla | Para qué sirve |
 |---|---|
-| **Resumen** | Saldos de tus cuentas, **inversiones (total y total por banco, con sus vencimientos)**, provisiones, variación contra el mes anterior y gráfico de patrimonio. |
+| **Resumen** | Saldos de tus cuentas, **inversiones (total y total por banco, con sus vencimientos)**, provisiones, variación contra el mes anterior y gráfico de patrimonio. El botón **«Cerrar mes»** hace el cierre completo de CONSOL (ver abajo). |
 | **Movimientos** | Elige una cuenta, mira sus últimos movimientos y agrega uno nuevo (la app escribe en la primera fila libre sin romper fórmulas). |
 | **Anotar** (el botón +) | Lista de tus hojas (cuentas y tarjetas): eliges una y **se abre esa hoja en la primera fila libre**, lista para escribir el movimiento. Es la misma lista que sale al pulsar «+ Movimiento». |
 | **Hojas** | Las hojas de tu libro, con las mismas fórmulas: edita celdas, copia y pega, rellena hacia abajo, deshaz. |
@@ -19,6 +19,12 @@ No necesita Excel, Microsoft 365 ni ningún plan de pago: la app es gratuita (Gi
 | **Ajustes** | Sincronización con GitHub, **código de conexión** para enlazar otro dispositivo, exportar a Excel (.xlsx), respaldo (.json), tema claro/oscuro, instalar la app. |
 
 Al instalar la app (Android, Windows, Mac), mantener pulsado o hacer clic derecho en su ícono ofrece atajos: *Anotar un movimiento* (abre la lista de hojas) y *Ver el resumen*.
+
+### Cerrar el mes
+
+En el Resumen, **«Cerrar mes»** hace lo que hacías a mano en CONSOL: guarda el archivo del mes (copia de todas las hojas), fija como valores la columna del mes que se cierra, abre la columna del mes siguiente, pasa «Mes anterior» al mes cerrado (bancos y patrimonio), actualiza la fecha de CONSOL y prepara la fila de resumen de la lista de ingresos. **Al cerrar diciembre abre el año nuevo** como los anteriores: archiva el año como valores, reinicia el bloque del año, corre el comparativo de diciembres y crea el resumen del año nuevo.
+
+Antes de escribir nada muestra una **vista previa** en lenguaje sencillo, con avisos y la lista celda por celda (antes → después). Es una sola operación: si algo no cuadra no se cambia nada, y después puedes usar **«Deshacer»** (también desde el Resumen, aunque hayas cerrado la app). Se puede cerrar cualquier día del mes; si todavía no termina, la vista previa lo avisa y pide confirmar.
 
 En una hoja: toca una celda para seleccionarla, vuelve a tocar (o doble clic / F2) para editar. `Ctrl+Z` deshace, `Ctrl+D` rellena hacia abajo,
 el cuadrito azul de la esquina de la selección arrastra fórmulas, y la barra inferior muestra suma y promedio de lo seleccionado.
@@ -75,6 +81,7 @@ esa copia es la que se sube al repositorio privado. Al abrir la app, cada dispos
 * `tools/` — `convert.py` (Excel → datos), `drop_sheets.py` (quitar hojas), `publish.py` (publicar app y datos), `make_icons.py`.
 * `js/ledger.js`, `js/dashboard.js`, `js/quick.js` — movimientos bancarios, resumen y capturas rápidas.
 * `js/invest.js` — tarjeta «Inversiones» del Resumen: lee las pólizas de la hoja de pólizas y suma el total invertido y el total por banco (con los ahorros a plazo aparte y la explicación de por qué el patrimonio cuenta menos).
+* `js/close.js` — cierre de mes completo de CONSOL (sin interfaz): `planClose` (calcula y valida sin escribir), `applyClose` (escribe en una sola tanda y verifica; si algo falla restaura todo) y `undoClose`; descubre los bloques anuales y los resúmenes por su estructura, así que sirve también para 2027 en adelante. Pruebas: `test/close-test.html`.
 * `js/archive.js` — archivo mensual: congela las hojas como valores, las comprime (gzip), las guarda en IndexedDB y las sube a `archivo/` del repositorio privado; trae la pantalla de lista y el visor de solo lectura (`css/archive.css`). Pruebas: `test/archive-test.html`.
 * `js/export.js` — exportación a `.xlsx` y respaldo `.json`. `js/pwa.js` + `sw.js` — instalación y modo sin conexión.
 * `test/` — páginas de prueba que se abren en el navegador (`test/verify.html` compara el motor con los valores calculados por Excel: 28 901 de 28 908 fórmulas iguales, 99,98 %).

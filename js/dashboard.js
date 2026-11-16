@@ -13,21 +13,25 @@
  *   A8:C17   líneas de provisión (A etiqueta, C monto); L7 suma C8:C17
  *   L21/M21/O21  mes en curso / mes anterior / diciembre base (fechas tipeadas, día 1 de cada mes)
  *   K22:K24 rótulos del patrimonio; L22:L25 actual · M22:M25 mes anterior · N22:N25 variación · O22:O25 diciembre base · P22:P25 acumulado
- *   Bloques anuales de patrimonio (columna R = diciembre previo; S..AD = ene..dic):
- *       2024: fechas fila 41 · partes filas 42:44 · total fila 45
- *       2025: fechas fila 48 · partes filas 49:51 · total fila 52 (totales tipeados, no SUM)
- *       2026: fechas fila 28 · partes filas 29:31 · total fila 32 (la columna del mes en curso es «viva»)
- *   Las filas 6, 10 y 15 (inicio de mes) y 8, 12 y 17 (MES = variación) de AF:AQ resumen estos bloques;
+ *   Bloques anuales de patrimonio (columna R = diciembre previo; S..AD = ene..dic): NO tienen filas fijas. Se descubren por su fila
+ *   de fechas (findNetWorthBlocks): hoy 2024 (fechas fila 41, partes 42:44, total 45), 2025 (48, 49:51, 52) y el bloque VIVO del año
+ *   en curso (fechas fila 28, partes 29:31, total 32; la columna del mes en curso es «viva»). Al cerrar diciembre, el cierre archiva
+ *   el año como valores debajo de los anteriores (ver close.js) y el bloque vivo pasa a ser el del año nuevo.
+ *   Las filas «inicio» y «MES» (variación) de los resúmenes por año (AF:AQ) resumen estos bloques;
  *   aquí se recalculan a partir de los totales para no depender de celdas que aún no tienen sentido (mes sin cerrar).
  *
  * API pública:
  *   mount(host, ctx, opts?) -> { destroy(), refresh() }
  *   readSummary(engine, opts?)        saldos por banco, provisión, disponible, flujo, mes anterior, variaciones, controles
  *   readProvisions(engine)            líneas de provisión (A8:C17) y líneas libres
- *   readNetWorthSeries(engine, opts?) patrimonio mensual por año (2024..2026) + serie continua + estadísticas
- *   setProvisionAmount / addProvision / planCloseMonth / closeMonth / restoreMonth   escrituras en el motor (sin tocar la interfaz)
+ *   readNetWorthSeries(engine, opts?) patrimonio mensual de todos los años que haya (archivados + vivo) + serie continua + estadísticas
+ *   findNetWorthBlocks(engine, opts?) bloques anuales descubiertos por sus fechas
+ *   setProvisionAmount / addProvision   escrituras en el motor (sin tocar la interfaz)
+ *   planCloseMonth / closeMonth / restoreMonth   copia simple «Mes actual» → «Mes anterior» (N4:N7); la pantalla ya NO la usa: cierra con close.js
+ *   closePreviewBody(plan, info)      cuerpo del diálogo «Cerrar <mes>» (resumen, avisos, casilla y cambios celda por celda)
  *   describeSeries(series)            resumen textual (accesibilidad) · niceTicks / fmtAxis   utilidades del gráfico
  */
+import { planClose, applyClose, undoClose, undoConflicts, isUndoRecord, findBlocks, CLOSE_KEY } from './close.js';
 import { a1ToAddr, colLetter } from './engine.js';
 import { el, money, monthText } from './ui.js';
 import { parseInput, serialToDate, todaySerial } from './format.js';
@@ -50,12 +54,9 @@ export const ACCOUNTS = [
 const PROV = { first: 7, last: 16, amountCol: 2, labelCol: 0 };               // A8:C17 en base 0
 const PREV_COL = 13;                                                         // columna N («Mes anterior»)
 const PREV_ROWS = [3, 4, 5, 6];                                              // filas 4..7 en base 0
-export const NETWORTH_BLOCKS = [
-  { year: 2024, partRows: [42, 43, 44], totalRow: 45, dateRow: 41 },
-  { year: 2025, partRows: [49, 50, 51], totalRow: 52, dateRow: 48 },
-  { year: 2026, partRows: [29, 30, 31], totalRow: 32, dateRow: 28 },
-];
+const LIVE_BLOCK = { partRows: [29, 30, 31], totalRow: 32, dateRow: 28 };    // el bloque vivo del año en curso está siempre en estas filas
 const FIRST_MONTH_COL = 18;                                                  // columna S = enero; R (17) = diciembre previo
+const STALE_AFTER = 3;                                                       // «Deshacer el último cierre» se ofrece mientras no hayan cambiado más de 3 celdas de las que escribió
 
 /* ================================================================== lectura segura de celdas */
 const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
@@ -178,7 +179,10 @@ export function readSummary(engine, opts = {}) {
     out.warnings.push({ code: 'errors', level: 'error', text: `Hay ${R.errors.length} ${plural(R.errors.length, 'celda', 'celdas')} con error en ${out.sheetName} (${list}${R.errors.length > 4 ? '…' : ''}). Abre la hoja para revisarlas.` });
   }
   if (out.control.ok === false) out.warnings.push({ code: 'control', level: 'warn', text: `La tabla de bancos no cuadra con el flujo del mes (diferencia ${money(diff)}). Revisa la hoja ${out.sheetName}.` });
-  if (out.month.behind !== null && out.month.behind > 0) out.warnings.push({ code: 'month', level: 'warn', text: `La hoja ${out.sheetName} sigue en ${out.month.currentLabel}, pero hoy ya es ${out.month.todayLabel}. Cuando cierres el mes, actualiza también las fechas de la hoja.` });
+  const lag = out.month.behind;                                                  // meses que la hoja va atrasada respecto del calendario (negativo: va adelantada)
+  if (lag !== null && lag === 1) out.warnings.push({ code: 'month', level: 'warn', text: `La hoja ${out.sheetName} sigue en ${out.month.currentLabel}, pero hoy ya es ${out.month.todayLabel}. Cuando termines de anotar el mes, toca «Cerrar mes»: se actualizan también las fechas de la hoja.` });
+  else if (lag !== null && lag > 1) out.warnings.push({ code: 'month', level: 'warn', text: `La hoja ${out.sheetName} sigue en ${out.month.currentLabel}, pero hoy ya es ${out.month.todayLabel}: faltan cierres. Cierra los meses en orden, uno por uno, con «Cerrar mes».` });
+  else if (lag !== null && lag < 0) out.warnings.push({ code: 'month-ahead', level: 'info', text: `La hoja ${out.sheetName} ya está en ${out.month.currentLabel}, pero hoy es ${out.month.todayLabel}. Es normal si cerraste el mes antes de que terminara.` });
   return out;
 }
 
@@ -263,8 +267,10 @@ export function clearProvisionLine(engine, r) {
   return { ok: true };
 }
 
-/* ================================================================== cerrar mes: «Mes actual» -> «Mes anterior» (N4:N7) */
-/** Prepara el cierre sin escribir. ok:false si no se puede; noop:true si «Mes anterior» ya es igual a «Mes actual». */
+/* ================================================================== copia simple «Mes actual» -> «Mes anterior» (N4:N7) */
+/* Es solo la fase D del cierre completo. La pantalla ya NO la usa: «Cerrar mes» hace todo el cierre con close.js (planClose / applyClose / undoClose).
+ * Se conserva exportada (y probada) por ser la copia exacta de la tabla de bancos. */
+/** Prepara la copia sin escribir. ok:false si no se puede; noop:true si «Mes anterior» ya es igual a «Mes actual». */
 export function planCloseMonth(engine) {
   const R = makeReader(engine);
   if (R.missing) return { ok: false, reason: 'No encuentro la hoja de resumen.' };
@@ -294,7 +300,29 @@ export function restoreMonth(engine, before) {
 
 /* ================================================================== patrimonio mes a mes */
 /**
- * Serie mensual del patrimonio (bancos + gastos provisionados + inversiones) de los bloques anuales de CONSOL.
+ * Bloques anuales de patrimonio mensual, ordenados por año: [{year, partRows, totalRow, dateRow, live}] (filas en A1).
+ * Se descubren por su fila de fechas (cualquier cantidad de años archivados) y SIEMPRE incluyen el bloque vivo (fila 28): si su
+ * fila de fechas no existe, el año sale de L21 (o de la fecha de hoy). Si hay dos bloques del mismo año, gana el vivo.
+ */
+export function findNetWorthBlocks(engine, opts = {}) {
+  const R = makeReader(engine);
+  if (R.missing) return [];
+  const byYear = new Map();
+  for (const b of findBlocks(engine)) byYear.set(b.year, { year: b.year, partRows: b.partRows, totalRow: b.totalRow, dateRow: b.dateRow, live: !!b.live });
+  const live = [...byYear.values()].find((b) => b.live);
+  if (!live) {
+    const cur = R.num('L21'), ref = isNum(cur) ? cur : (isNum(opts.today) ? opts.today : todaySerial());
+    const year = serialToDate(ref).getUTCFullYear();
+    byYear.set(year, Object.assign({ year, live: true }, LIVE_BLOCK));            // el vivo reemplaza a un archivado del mismo año
+  } else {
+    for (const b of [...byYear.values()]) if (b !== live && b.year === live.year) byYear.delete(b.year);
+    byYear.set(live.year, live);
+  }
+  return [...byYear.values()].sort((a, b) => a.year - b.year);
+}
+
+/**
+ * Serie mensual del patrimonio (bancos + gastos provisionados + inversiones) de los bloques anuales de CONSOL (archivados y vivo).
  * Un mes cuenta si tiene total numérico y no es un cero sin componentes (columna futura aún vacía).
  * @returns {{ok:boolean, years:object[], flat:object[], labels:string[], stats:object, errors:object[]}}
  */
@@ -307,7 +335,7 @@ export function readNetWorthSeries(engine, opts = {}) {
   const curIdx = isNum(cur) ? monthIdx(cur) : monthIdx(isNum(opts.today) ? opts.today : todaySerial());
   out.current = { serial: cur, idx: curIdx };
   let carry = null;
-  for (const b of NETWORTH_BLOCKS) {
+  for (const b of findNetWorthBlocks(engine, opts)) {
     const openTotal = R.num('R' + b.totalRow);
     const opening = isNum(openTotal) ? { serial: serialOf(b.year - 1, 11), label: labelOf(b.year - 1, 11), total: openTotal } : null;
     let prevTotal = opening ? openTotal : carry;
@@ -440,12 +468,12 @@ function createNetWorthChart(host, hooks = {}) {
       return { kind: 'all', n, min, slots, lines: [{ key: 'all', cls: 's1', points: slots, label: '' }] };
     }
     const latest = s.years[s.years.length - 1].year;
-    const lines = s.years.slice().reverse().map((y) => {
+    const lines = s.years.slice(-3).reverse().map((y) => {                       // la vista «Por año» muestra los 3 años más recientes (hay 3 colores que se distinguen bien)
       const points = Array.from({ length: 12 }, () => null);
       for (const m of y.months) points[m.month] = m;
       return { key: String(y.year), year: y.year, cls: 's' + yearSlot(y.year, latest), points, label: String(y.year) };
     });
-    return { kind: 'year', n: 12, lines, latest };
+    return { kind: 'year', n: 12, lines, latest, more: s.years.length > 3 };
   }
 
   /* ---- dibujo ---- */
@@ -565,6 +593,7 @@ function createNetWorthChart(host, hooks = {}) {
     if (M.kind === 'year') {
       legend.hidden = false;
       for (const ln of M.lines) legend.append(el('span', { class: 'db-key' }, el('i', { class: 'db-keyline ' + ln.cls }), ln.label));
+      if (M.more) legend.append(el('span', { class: 'db-key-note', text: 'Los 3 años más recientes' }));
     } else legend.hidden = true;
 
     if (st.pinned !== null && st.pinned < M.n) show(st.pinned, false); else { st.pinned = null; emit(null); }
@@ -670,6 +699,75 @@ function createNetWorthChart(host, hooks = {}) {
   };
 }
 
+/* ================================================================== cerrar mes: vista previa (cuerpo del diálogo) */
+const monthName = (label) => String(label || '').split(' ')[0];                 // «noviembre 2026» -> «noviembre»
+let cmUid = 0;
+
+/**
+ * Cuerpo del diálogo «Cerrar <mes>»: qué se va a hacer (lenguaje simple), avisos, casilla de confirmación y los cambios celda por celda.
+ * Con el plan bloqueado solo explica qué no cuadra y qué hacer (no hay nada que confirmar).
+ * @param {object} plan  resultado de planClose (close.js)
+ * @param {{archive?:'ok'|'none'|'replace'|'unknown', extra?:{id,text,confirm}[], onChange?:Function}} info  estado del archivo mensual, avisos extra; onChange se llama al marcar la casilla
+ * @returns {{node:HTMLElement, state():{blocked:boolean, needsConfirm:boolean, confirmed:boolean, ready:boolean}}}
+ */
+export function closePreviewBody(plan, info = {}) {
+  const root = el('div', { class: 'db-cm' });
+  const label = plan.month ? plan.month.label : '', next = plan.next ? plan.next.label : '', mname = monthName(label) || 'el mes';
+  if (!plan.ok) {
+    root.append(el('p', { class: 'db-cm-lead', text: `Todavía no se puede cerrar ${label || 'el mes'}. Esto es lo que hay que arreglar primero:` }));
+    const ul = el('ul', { class: 'db-cm-block', role: 'list' });
+    for (const b of plan.blocked) ul.append(el('li', { 'data-id': b.id, text: b.text }));
+    root.append(ul, el('p', { class: 'db-cm-note small muted', text: 'No se cambió nada. Cuando lo arregles, vuelve a tocar «Cerrar mes».' }));
+    return { node: root, state: () => ({ blocked: true, needsConfirm: false, confirmed: false, ready: false }) };
+  }
+  const arch = info.archive || 'ok';
+  const rowTxt = plan.vars && plan.vars.rowNext ? ` (fila ${plan.vars.rowNext})` : '';
+  const fg = plan.figures, figuresTxt = fg && fg.parts.every((x) => x !== null) && fg.total !== null ? ` (${fg.labels.map((l, i) => cap(l) + ' ' + money(fg.parts[i])).join(' · ')} = patrimonio ${money(fg.total)})` : '';
+  const steps = [
+    arch === 'none' ? `No se guardará el archivo del mes: esta versión no lo tiene.` : `Se guarda un archivo del mes con cómo está todo hoy (${label}).`,
+    `Se fijan en CONSOL los valores de ${label}${figuresTxt}: la columna del mes deja de cambiar sola.`,
+    plan.yearEnd ? `Se abre ${next}, el primer mes del año nuevo.` : `Se abre ${next}: su columna queda lista para seguir el mes.`,
+    `«Mes anterior» pasa a ser ${label}: el Resumen compara contra este cierre.`,
+    plan.vars && plan.vars.rowNextExisting ? `La lista de ingresos de ${next} ya estaba preparada${rowTxt}.` : `Se prepara la lista de ingresos de ${next}${rowTxt}.`,
+  ];
+  if (plan.yearEnd) steps.push(`Se abre el año ${plan.next.year}: ${plan.month.year} queda archivado como valores en CONSOL${plan.vars && plan.vars.d ? ` (filas ${plan.vars.d} a ${plan.vars.CH})` : ''}, el patrimonio mensual empieza de nuevo en enero y se compara con ${plan.month.year}.`);
+  root.append(el('p', { class: 'db-cm-lead', text: 'Se actualizan varias partes de CONSOL de una sola vez. Si algo no cuadra, no se cambia nada, y después puedes deshacerlo.' }));
+  const ol = el('ol', { class: 'db-cm-steps' });
+  for (const t of steps) ol.append(el('li', {}, el('span', { text: t })));
+  root.append(ol);
+
+  const warns = plan.warnings.slice();
+  if (arch === 'none') warns.push({ id: 'ARCH', confirm: true, text: 'El archivo mensual no está disponible en esta versión: el cierre no guardará una copia de cómo estaba todo.' });
+  if (arch === 'replace') warns.push({ id: 'ARCH', confirm: false, text: `Se reemplaza el archivo de ${mname} que ya había.` });
+  for (const w of info.extra || []) warns.push(w);                                  // avisos de la pantalla (p. ej. sincronización con GitHub)
+  for (const w of warns) root.append(el('div', { class: 'db-cm-warn', role: 'note', 'data-id': w.id }, el('span', { class: 'db-cm-warn-ic', 'aria-hidden': 'true', text: '!' }), el('span', { text: w.text })));
+  const needsConfirm = warns.some((w) => w.confirm);
+  let confirmed = false;
+  if (needsConfirm) {
+    const id = 'db-cm-ok' + (++cmUid);
+    const box = el('input', { type: 'checkbox', id, class: 'db-cm-chk', onchange: (e) => { confirmed = !!e.target.checked; if (info.onChange) info.onChange(); } });
+    root.append(el('label', { class: 'db-cm-check', for: id }, box, el('span', { text: `Entiendo los avisos y quiero cerrar ${label} de todos modos.` })));
+  }
+
+  // cambios celda por celda (para quien quiera controlar lo que se escribe)
+  const byPhase = new Map();
+  for (const c of plan.cells) { if (!byPhase.has(c.phase)) byPhase.set(c.phase, []); byPhase.get(c.phase).push(c); }
+  const fmts = plan.counts ? plan.counts.formats : 0;
+  const det = el('details', { class: 'db-cm-details' }, el('summary', { text: `Ver los cambios celda por celda (${plan.cells.length} ${plural(plan.cells.length, 'celda', 'celdas')}${fmts ? ` y ${fmts} ${plural(fmts, 'formato', 'formatos')}` : ''})` }));
+  const wrap = el('div', { class: 'db-cm-changes' });
+  for (const ph of plan.phases) {
+    const list = byPhase.get(ph.id); if (!list || !list.length) continue;
+    const table = el('table', { class: 't db-cm-table' }, el('caption', { class: 'db-sr', text: ph.title }),
+      el('thead', {}, el('tr', {}, el('th', { scope: 'col', text: 'Celda' }), el('th', { scope: 'col', text: 'Antes' }), el('th', { scope: 'col', text: 'Después' }))),
+      el('tbody', {}, ...list.map((c) => el('tr', {}, el('th', { scope: 'row', class: 'db-cm-a1', text: c.a1 }), el('td', { text: c.before }), el('td', { text: c.after })))));
+    wrap.append(el('h3', { class: 'db-cm-ph', text: ph.title }), el('div', { class: 'scrollx' }, table));
+  }
+  if (fmts) wrap.append(el('p', { class: 'small muted', text: `Además se copian ${fmts} ${plural(fmts, 'formato', 'formatos')} de celdas (colores y estilo de números) para que lo nuevo se vea como lo anterior.` }));
+  det.append(wrap);
+  root.append(det);
+  return { node: root, state: () => ({ blocked: false, needsConfirm, confirmed, ready: !needsConfirm || confirmed }) };
+}
+
 /* ================================================================== pantalla */
 let ledgerPromise = null;
 function loadLedger() {
@@ -687,13 +785,13 @@ function ledgerEntry(L, id) {
  * Monta el Resumen en `host`.
  * @param {HTMLElement} host
  * @param {object} ctx  contexto de la app (engine, changed, navigate, openSheet, toast, confirm, today, catalog…)
- * @param {{ledger?:object|false}} opts  opts.ledger inyecta el módulo de movimientos (pruebas); false = no cargarlo
+ * @param {{ledger?:object|false, archiveTimeoutMs?:number}} opts  opts.ledger inyecta el módulo de movimientos (pruebas); false = no cargarlo; archiveTimeoutMs = espera máxima al guardar el archivo del mes (60 000 por omisión)
  * @returns {{destroy():void, refresh():void}}
  */
 export function mount(host, ctx, opts = {}) {
   const root = el('div', { class: 'db' });
   host.append(root);
-  const S = { mode: 'all', tableOpen: false, active: null, editing: null, adding: false, undo: null, undoTimer: 0, ledger: opts.ledger || null, noLedger: opts.ledger === false, recentId: null, destroyed: false, refreshes: 0 };
+  const S = { mode: 'all', tableOpen: false, active: null, editing: null, adding: false, undo: null, undoTimer: 0, ledger: opts.ledger || null, noLedger: opts.ledger === false, recentId: null, destroyed: false, refreshes: 0, lastClose: null, closing: false };
   let D = null, chart = null;
 
   const secBanners = el('div', { class: 'db-banners' });
@@ -752,20 +850,23 @@ export function mount(host, ctx, opts = {}) {
     secBanners.replaceChildren();
     const s = D.summary;
     if (S.undo) {
-      secBanners.append(el('div', { class: 'banner db-banner ok', role: 'status' }, el('span', { class: 'grow', text: S.undo.text }),
-        el('button', { class: 'btn', type: 'button', text: 'Deshacer', onclick: () => { const u = S.undo; clearUndo(); try { u.run(); } catch (e) { console.warn(e); } afterWrite(); notify('ok', 'Cambio deshecho'); } })));
+      const u0 = S.undo;
+      secBanners.append(el('div', { class: 'banner db-banner ok' + ((u0.extras || []).length ? ' multi' : ''), role: 'status' }, el('span', { class: 'grow', text: u0.text }),
+        el('button', { class: 'btn', type: 'button', text: 'Deshacer', onclick: () => { const u = S.undo; if (u.custom) { u.run(); return; } clearUndo(); try { u.run(); } catch (e) { console.warn(e); } afterWrite(); notify('ok', 'Cambio deshecho'); } }),
+        ...(u0.extras || []).map((x) => el('button', { class: 'btn', type: 'button', text: x.text, onclick: x.run }))));
     }
     for (const w of s.warnings) {
       if (w.code === 'nosheet') continue;
-      secBanners.append(el('div', { class: 'banner db-banner ' + (w.level === 'error' ? 'err' : 'warn'), role: w.level === 'error' ? 'alert' : 'status' },
+      secBanners.append(el('div', { class: 'banner db-banner ' + (w.level === 'error' ? 'err' : w.level === 'info' ? 'info' : 'warn'), role: w.level === 'error' ? 'alert' : 'status' },
         el('span', { class: 'grow', text: w.text }),
         w.code === 'errors' || w.code === 'control' ? el('button', { class: 'btn', type: 'button', text: 'Ver hoja', onclick: () => ctx.openSheet && ctx.openSheet(SID) }) : null));
     }
   }
-  function setUndo(text, run) {
+  /** Aviso con «Deshacer». custom:true = `run` hace todo por su cuenta (confirmación, refresco, mensajes); extras = botones adicionales. */
+  function setUndo(text, run, { custom = false, extras = [], ms = 45000 } = {}) {
     clearUndo();
-    S.undo = { text, run };
-    S.undoTimer = setTimeout(() => { S.undo = null; if (!S.destroyed && D) renderBanners(); }, 45000);
+    S.undo = { text, run, custom, extras };
+    S.undoTimer = setTimeout(() => { S.undo = null; if (!S.destroyed && D) renderBanners(); }, ms);
   }
   function clearUndo() { clearTimeout(S.undoTimer); S.undo = null; }
 
@@ -824,25 +925,163 @@ export function mount(host, ctx, opts = {}) {
       b('primary', 'plus', 'Movimiento', () => ctx.navigate('mov?nuevo=1'), { 'aria-label': 'Agregar movimiento' }),
       b('', 'sheet', 'Ver hoja ' + (s.ok ? s.sheetName : 'CONSOL'), () => ctx.openSheet(SID)),
       b('', 'search', 'Buscar', () => ctx.navigate('buscar')),
-      b('', 'lock', 'Cerrar mes', onCloseMonth, { disabled: !s.ok || s.empty, title: 'Copia «Mes actual» a «Mes anterior»' }));
+      b('', 'lock', 'Cerrar mes', onCloseMonth, { disabled: !s.ok || s.empty, title: 'Cierra el mes: guarda el archivo, fija los valores y abre el mes siguiente' }));
+    if (S.lastClose) secActions.append(el('button', { class: 'db-lastclose', type: 'button', onclick: undoLastClose }, `Deshacer el último cierre (${S.lastClose.label})`));
+  }
+
+  /* ---- cerrar mes: vista previa, archivo, cierre y deshacer ---- */
+  /** Estado del archivo mensual: 'none' (no existe el módulo), 'replace' (ya hay uno de ese mes), 'ok' o 'unknown' (no se pudo consultar). */
+  async function archiveInfo(plan) {
+    const A = ctx.archive;
+    if (!A || typeof A.snapshot !== 'function') return 'none';
+    if (typeof A.has !== 'function') return 'ok';
+    try {
+      const has = await Promise.race([Promise.resolve(A.has(plan.month.key)), new Promise((r) => setTimeout(() => r('timeout'), 2500))]);
+      return has === 'timeout' ? 'unknown' : has === true ? 'replace' : 'ok';
+    } catch (e) { return 'unknown'; }
+  }
+  /** Avisos de sincronización con GitHub: si hay conflictos o la última sincronización falló, cerrar el mismo mes en otro dispositivo obligaría a descartar uno de los dos cierres. */
+  async function syncNotices() {
+    const Sy = ctx.sync;
+    if (!Sy || typeof Sy.isConfigured !== 'function' || typeof Sy.status !== 'function') return [];
+    try {
+      if (!Sy.isConfigured()) return [];
+      const st = await Promise.race([Promise.resolve(Sy.status()), new Promise((r) => setTimeout(() => r(null), 2000))]);
+      if (!st) return [];
+      const out = [], n = Array.isArray(st.conflicts) ? st.conflicts.length : 0;
+      if (n > 0) out.push({ id: 'SYNC', confirm: true, text: `Hay ${n} ${plural(n, 'hoja', 'hojas')} en conflicto con GitHub (otro dispositivo guardó cambios). Conviene resolverlo en Ajustes → Sincronización antes de cerrar: si el mes también se cierra en otro dispositivo, uno de los dos cierres se perderá.` });
+      else if (st.lastError) out.push({ id: 'SYNC', confirm: false, text: 'La última sincronización con GitHub falló. Si el mes también se cierra en otro dispositivo antes de sincronizar, uno de los dos cierres se perderá.' });
+      return out;
+    } catch (e) { return []; }
+  }
+  async function saveLastClose(rec) {
+    if (!ctx.store || typeof ctx.store.setSetting !== 'function') return false;
+    try { await ctx.store.setSetting(CLOSE_KEY, rec); return true; } catch (e) { console.warn('[cierre] no se pudo guardar el «deshacer» para después de cerrar la app:', e); return false; }
+  }
+  async function dropLastClose() {
+    if (!ctx.store || typeof ctx.store.delSetting !== 'function') return;
+    try { await ctx.store.delSetting(CLOSE_KEY); } catch (e) { console.warn('[cierre] no se pudo borrar el «deshacer» guardado:', e); }
+  }
+  /** ¿El registro de deshacer todavía corresponde a la hoja? Si cambiaron muchas de las celdas que escribió el cierre (otro cierre en otro
+   *  dispositivo, un respaldo restaurado…), deshacerlo pisaría trabajo más nuevo: ya no se ofrece. */
+  const closeStale = (rec) => { const c = undoConflicts(eng(), rec); return c === null || c.length > STALE_AFTER; };
+  async function loadLastClose() {
+    if (!ctx.store || typeof ctx.store.getSetting !== 'function') return;
+    let rec = null;
+    try { rec = await ctx.store.getSetting(CLOSE_KEY, null); } catch (e) { rec = null; }
+    if (S.destroyed || !isUndoRecord(rec) || S.lastClose) return;
+    if (closeStale(rec)) { dropLastClose(); return; }
+    S.lastClose = rec;
+    if (D) renderActions();
   }
 
   async function onCloseMonth() {
+    if (S.closing) return;
+    S.closing = true;
+    let handedOver = false;
     try {
-      const plan = planCloseMonth(eng());
-      if (!plan.ok) { notify('warn', plan.reason); return; }
-      if (plan.noop) { notify('info', `«${plan.headers.previous}» ya es igual a «${plan.headers.actual}»: no hay nada que cerrar.`); return; }
-      const msg = `Se copiarán los valores de «${plan.headers.actual}» a «${plan.headers.previous}» (bancos y provisión). ` +
-        `El total anterior pasará de ${money(plan.totalPrevious)} a ${money(plan.totalActual)} y las variaciones quedarán en cero. ` +
-        `Las fechas y el patrimonio mensual de la hoja no se modifican.`;
-      const ok = await ctx.confirm(msg, { ok: 'Cerrar mes', title: 'Cerrar mes' });
-      if (!ok || S.destroyed) return;
-      const res = closeMonth(eng());
-      if (!res.ok) { notify('error', res.reason || 'No se pudo cerrar el mes.'); return; }
-      setUndo(`Listo: «${plan.headers.previous}» ahora tiene los valores de «${plan.headers.actual}».`, () => restoreMonth(eng(), res.before));
+      const plan = planClose(eng(), { today: typeof ctx.today === 'function' ? ctx.today() : undefined });
+      const arch = plan.ok ? await archiveInfo(plan) : 'ok';
+      const extra = plan.ok ? await syncNotices() : [];
+      if (S.destroyed) return;
+      if (typeof ctx.modal === 'function') { showCloseDialog(plan, arch, extra); handedOver = true; }   // el diálogo suelta S.closing al cerrarse
+      else await closeWithConfirm(plan, arch, extra);
+    } catch (e) { console.error(e); notify('error', 'No se pudo preparar el cierre: ' + ((e && e.message) || e)); }
+    finally { if (!handedOver) S.closing = false; }
+  }
+  /** Sin ctx.modal (contexto antiguo): confirmación sencilla con el mismo resumen. */
+  async function closeWithConfirm(plan, arch, extra = []) {
+    if (!plan.ok) { notify('warn', plan.blocked.map((x) => x.text).join(' ')); return; }
+    const w = [...plan.warnings, ...extra].filter((x) => x.confirm).map((x) => x.text).join(' ');
+    const msg = `Se guarda el archivo de ${plan.month.label}, se fijan sus valores en CONSOL, se abre ${plan.next.label} y «Mes anterior» pasa a ser ${plan.month.label}.${plan.yearEnd ? ` Además se abre el año ${plan.next.year}.` : ''} ${w}${arch === 'none' ? ' El archivo mensual no está disponible en esta versión: no se guardará una copia.' : ''}`.trim();
+    const ok = await ctx.confirm(msg, { ok: 'Cerrar ' + monthName(plan.month.label), title: 'Cerrar ' + plan.month.label });
+    if (!ok || S.destroyed) return;
+    const res = await doClose(plan, { onStatus() {} });
+    if (!res.ok) notify('error', res.error, 9000);
+  }
+  function showCloseDialog(plan, arch, extra = []) {
+    let busy = false, dlg = null, gone = false;
+    const err = el('p', { class: 'db-err small', role: 'alert', hidden: true });
+    const status = el('p', { class: 'db-cm-status small muted', role: 'status', hidden: true });
+    const body = closePreviewBody(plan, { archive: arch, extra, onChange: () => sync() });
+    const cancel = el('button', { class: 'btn', type: 'button', text: plan.ok ? 'Cancelar' : 'Entendido', onclick: () => dlg && dlg.close() });
+    const go = plan.ok ? el('button', { class: 'btn primary', type: 'button', text: 'Cerrar ' + monthName(plan.month.label), onclick: run }) : null;
+    const see = plan.ok ? null : el('button', { class: 'btn', type: 'button', text: 'Ver hoja ' + (D && D.summary.ok ? D.summary.sheetName : 'CONSOL'), onclick: () => { if (dlg) dlg.close(); if (ctx.openSheet) ctx.openSheet(SID); } });
+    const actions = el('div', { class: 'db-cm-actions' }, ...(plan.ok ? [cancel, go] : [see, cancel]));
+    function sync() { if (go) go.disabled = busy || !body.state().ready; cancel.disabled = busy; }
+    async function run() {
+      if (busy || !body.state().ready) return;
+      busy = true; sync(); err.hidden = true;
+      const res = await doClose(plan, { onStatus: (t) => { status.textContent = t; status.hidden = false; } });
+      busy = false;
+      if (res.ok) { S.closing = false; if (dlg) dlg.close(); return; }
+      if (gone) { S.closing = false; notify('error', res.error, 9000); return; }       // cerraron el diálogo mientras se trabajaba: el error sale como aviso
+      status.hidden = true; err.textContent = res.error; err.hidden = false; sync();
+      try { err.scrollIntoView({ block: 'nearest' }); } catch (e) { /* nada */ }
+    }
+    dlg = ctx.modal(el('div', {}, body.node, err, status, actions), { title: 'Cerrar ' + (plan.month ? plan.month.label : 'el mes'), onClose: () => { gone = true; if (!busy) S.closing = false; } });
+    sync();
+    // al abrir, el foco va a «Cancelar» (la opción segura) y el diálogo se ve desde arriba (el enfoque automático lo dejaría en la casilla, al final)
+    try { requestAnimationFrame(() => { try { cancel.focus({ preventScroll: true }); if (dlg && dlg.body) dlg.body.scrollTop = 0; } catch (e) { /* nada */ } }); } catch (e) { /* nada */ }
+  }
+  /** Guarda el archivo del mes (si existe el módulo) y SOLO entonces escribe el cierre. Devuelve {ok} o {ok:false, error}. */
+  async function doClose(plan, { onStatus }) {
+    const A = ctx.archive;
+    let archived = false;
+    try {
+      if (A && typeof A.snapshot === 'function') {
+        onStatus('Guardando el archivo del mes…');
+        let r = null;
+        try {
+          r = await Promise.race([A.snapshot({ key: plan.month.key, label: plan.month.label, source: 'cierre', replace: true }),
+            new Promise((res) => setTimeout(() => res({ ok: false, error: 'tardó demasiado' }), isNum(opts.archiveTimeoutMs) ? opts.archiveTimeoutMs : 60000))]);
+        } catch (e) { r = { ok: false, error: (e && e.message) || String(e) }; }
+        if (!r || r.ok !== true) return { ok: false, error: `No se pudo guardar el archivo del mes${r && r.error ? ' (' + r.error + ')' : ''}. No se cerró nada: la hoja está igual que antes. Puedes volver a intentarlo.` };
+        archived = true;
+      }
+      onStatus('Cerrando el mes…');
+      const res = applyClose(eng(), plan, { confirmed: true });              // vuelve a planificar: si la hoja cambió mientras se guardaba el archivo, no escribe
+      if (!res.ok) return { ok: false, error: res.error + (archived ? ' (El archivo del mes sí se guardó.)' : '') };
+      const rec = Object.assign({}, res.undo, { archived });
+      S.lastClose = rec;
+      saveLastClose(rec);
+      if (!S.destroyed) {
+        const mn = cap(monthName(plan.month.label));
+        const extras = archived && ctx.navigate ? [{ text: 'Ver archivo', run: () => ctx.navigate('archivo/' + plan.month.key) }] : [];
+        setUndo(`${mn} cerrado.${archived ? ' Archivo guardado.' : ''}${plan.yearEnd ? ` Ya está abierto ${plan.next.year}.` : ''}`, undoLastClose, { custom: true, extras, ms: 120000 });
+      }
       afterWrite();
-      notify('ok', 'Mes cerrado');
-    } catch (e) { console.error(e); notify('error', 'No se pudo cerrar el mes: ' + ((e && e.message) || e)); }
+      notify('ok', `${cap(monthName(plan.month.label))} cerrado`);
+      return { ok: true };
+    } catch (e) { console.error(e); return { ok: false, error: 'No se pudo cerrar el mes: ' + ((e && e.message) || e) }; }
+  }
+  /** «Deshacer el último cierre»: pide confirmación, restaura contenido y formato y borra el registro guardado. */
+  async function undoLastClose() {
+    const rec = S.lastClose;
+    if (!rec) return;
+    if (closeStale(rec)) {                                                  // la hoja cambió mucho desde ese cierre: no se puede deshacer sin perder trabajo más nuevo
+      S.lastClose = null; clearUndo(); await dropLastClose();
+      if (D && !S.destroyed) { renderBanners(); renderActions(); }
+      notify('warn', `El cierre de ${rec.label} ya no se puede deshacer: la hoja cambió mucho desde entonces. Se quitó el aviso.`, 7000);
+      return;
+    }
+    const n = rec.cells.length;
+    const what = ['fechas', 'columnas del mes', '«Mes anterior»', 'lista de ingresos']; if (rec.yearEnd) what.push('el año nuevo que se abrió');
+    const ok = await ctx.confirm(`¿Deshacer el cierre de ${rec.label}? Vuelven a su estado anterior ${n} ${plural(n, 'celda', 'celdas')} de ${D ? D.summary.sheetName : 'CONSOL'} (${what.slice(0, -1).join(', ')} y ${what[what.length - 1]}). El archivo que se guardó del mes no se borra.`,
+      { ok: 'Deshacer cierre', title: `Deshacer el cierre de ${rec.label}` });
+    if (!ok) return;
+    let res = undoClose(eng(), rec);
+    if (!res.ok && res.conflict) {
+      const force = await ctx.confirm(`${res.error} ¿Deshacer de todos modos? Se perderían esos cambios.`, { ok: 'Deshacer de todos modos', title: 'Hay cambios nuevos', danger: true });
+      if (!force) return;
+      res = undoClose(eng(), rec, { force: true });
+    }
+    if (!res.ok) { notify('error', res.error); return; }
+    if (S.lastClose === rec) S.lastClose = null;
+    clearUndo();
+    await dropLastClose();
+    if (!S.destroyed) afterWrite(); else { try { ctx.changed([SID]); } catch (e) { /* nada */ } }
+    notify('ok', `Cierre de ${rec.label} deshecho`);
   }
 
   /* ---- bancos ---- */
@@ -1099,6 +1338,7 @@ export function mount(host, ctx, opts = {}) {
     root.append(el('div', { class: 'card' }, el('h2', { text: 'No se pudo mostrar el resumen' }), el('p', { class: 'muted', text: String((e && e.message) || e) })));
   }
   if (!S.ledger && !S.noLedger) loadLedger().then((m) => { if (m && !S.destroyed) { S.ledger = m; if (D) { D = snapshot(); renderBanks(); renderRecent(); } } });
+  loadLastClose();                                                             // «Deshacer el último cierre» sobrevive al cierre de la app (almacén kv de IndexedDB)
 
   return {
     refresh,

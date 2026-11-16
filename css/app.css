@@ -128,6 +128,12 @@ main#screens { min-height: 0; overflow: hidden; position: relative; display: fle
 :root[data-theme="dark"] .banner, :root:not([data-theme="light"]) .banner { }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .banner { background: #3a2f10; color: #ffe29a; } }
 
+/* ---------- Movimientos: lista desplegable de hojas (reemplaza las fichas propias de cada módulo) ---------- */
+.mov-pick { max-width: 620px; margin-bottom: 14px; }
+.mov-pick select { font-weight: 600; }
+.mov-screen .lg-chips { display: none; }
+.mov-screen .qk-back { display: none; }
+
 /* ---------- hoja (cuadrícula) ---------- */
 .sheetbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--card); border-bottom: 1px solid var(--line); }
 .sheetbar select { flex: 1; min-width: 0; padding: 7px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }

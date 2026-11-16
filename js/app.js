@@ -265,7 +265,9 @@ function parseHash() {
 let routeToken = 0;
 async function route() {
   if (!state.engine) return;
-  const { name, arg, q } = parseHash();
+  const parsed = parseHash();
+  const { arg, q } = parsed;
+  const name = ({ registrar: 'reg', movimientos: 'mov' })[parsed.name] || parsed.name;     // los módulos navegan con estos nombres largos
   const token = ++routeToken;
   if (state.screenObj) { try { state.screenObj.destroy && state.screenObj.destroy(); } catch (e) { console.warn(e); } }
   state.screenObj = null; state.grid = null;
@@ -291,10 +293,38 @@ const SCREENS = {
     return openGridIn(host, 'CONSOL', new URLSearchParams());
   },
   async mov(host, arg) {
-    const L = state.mods.ledger;
-    const wrap = el('div', { class: 'screen' }); host.append(wrap);
-    if (L && L.mount) return L.mount(wrap, ctx, { ledgerId: arg });
-    wrap.append(el('div', { class: 'card' }, el('h2', { text: 'Movimientos' }), el('p', { class: 'muted', text: 'La captura rápida de movimientos aún no está disponible en esta versión. Usa la pestaña Hojas.' })));
+    const L = state.mods.ledger, Q = state.mods.quick;
+    const wrap = el('div', { class: 'screen mov-screen' }); host.append(wrap);
+    if (!L || !L.mount) {
+      wrap.append(el('div', { class: 'card' }, el('h2', { text: 'Movimientos' }), el('p', { class: 'muted', text: 'La captura rápida de movimientos aún no está disponible en esta versión. Usa la pestaña Hojas.' })));
+      return {};
+    }
+    // Lista desplegable con las hojas donde se anota el movimiento: cuentas bancarias y tarjetas
+    const targets = Object.values(L.LEDGERS || {}).map((d) => ({ id: d.id, kind: 'ledger', label: d.title || d.short }));
+    if (Q && Q.mountForm && Q.SHEETS) {
+      for (const fid of ['tcpich', 'produb']) {
+        const sh = state.engine.sheet(Q.SHEETS[fid]);
+        if (sh) targets.push({ id: fid, kind: 'form', label: catalog.infoFor(sh).short });
+      }
+    }
+    let saved = null; try { saved = localStorage.getItem('fx-mov-target'); } catch (e) { /* */ }
+    let current = targets.find((t) => t.id === arg) || targets.find((t) => t.id === saved) || targets[0];
+    const select = el('select', { id: 'mov-target', 'aria-label': 'Hoja donde se anota el movimiento' });
+    for (const t of targets) select.append(el('option', { value: t.id, text: t.label, selected: t.id === current.id }));
+    wrap.append(el('div', { class: 'field mov-pick' }, el('label', { for: 'mov-target', text: 'Hoja donde se anota el movimiento' }), select));
+    const body = el('div', { class: 'mov-body' }); wrap.append(body);
+    let child = null;
+    const show = (t) => {
+      if (child && child.destroy) { try { child.destroy(); } catch (e) { console.warn(e); } }
+      body.innerHTML = ''; current = t;
+      try { localStorage.setItem('fx-mov-target', t.id); } catch (e) { /* */ }
+      try { history.replaceState(null, '', '#/mov/' + t.id); } catch (e) { /* */ }
+      child = (t.kind === 'ledger' ? L.mount(body, ctx, { ledgerId: t.id }) : Q.mountForm(body, ctx, t.id)) || null;
+      if (wrap.isConnected) $('#title').textContent = TITLES.mov;
+    };
+    select.addEventListener('change', () => show(targets.find((t) => t.id === select.value)));
+    show(current);
+    return { destroy() { if (child && child.destroy) child.destroy(); }, refresh() { if (child && child.refresh) child.refresh(); } };
   },
   async reg(host, arg) {
     const Q = state.mods.quick;
@@ -314,14 +344,14 @@ const SCREENS = {
     const wrap = el('div', { class: 'screen' }); host.append(wrap);
     const render = () => {
       wrap.innerHTML = '';
-      const hiddenCount = state.engine.sheets.filter((s) => s.hidden).length;
+      const hiddenCount = state.engine.sheets.filter(catalog.isHiddenSheet).length;
       for (const g of catalog.groupSheets(state.engine.sheets, { showHidden: state.showHidden })) {
         const card = el('div', { class: 'card' }, el('h2', { text: g.group.icon + '  ' + g.group.title }));
         const ul = el('ul', { class: 'list' });
         for (const { sheet, info } of g.items) {
           ul.append(el('li', { onclick: () => ctx.openSheet(sheet.id, { end: info.end }), style: { cursor: 'pointer' } },
             el('div', { class: 'grow' }, el('div', { class: 't', text: info.short }), el('div', { class: 's', text: info.desc || sheet.name.trim() })),
-            sheet.hidden ? el('span', { class: 'badge', text: 'oculta' }) : null,
+            catalog.isHiddenSheet(sheet) ? el('span', { class: 'badge', text: 'oculta' }) : null,
             el('span', { class: 'muted', html: '&rsaquo;' })));
         }
         card.append(ul); wrap.append(card);
@@ -340,12 +370,13 @@ const SCREENS = {
     const run = async () => {
       const qv = input.value.trim(); out.innerHTML = '';
       if (qv.length < 2) { out.append(el('p', { class: 'empty', text: 'Escribe al menos 2 letras.' })); return; }
-      if (state.engine.sheets.some((s) => !s.loaded)) {           // la primera búsqueda carga todas las hojas
-        out.append(el('div', { class: 'empty' }, el('div', { class: 'spin' }), 'Preparando la búsqueda en todas las hojas…'));
-        await state.engine.ensureAllAsync();
+      const scope = state.engine.sheets.filter((s) => state.showHidden || !catalog.isHiddenSheet(s));     // las hojas ocultas no se buscan
+      if (scope.some((s) => !s.loaded)) {                           // la primera búsqueda carga las hojas que faltan
+        out.append(el('div', { class: 'empty' }, el('div', { class: 'spin' }), 'Preparando la búsqueda en las hojas…'));
+        for (const s of scope) if (!s.loaded) await state.engine.loadSheetAsync(s.id);
         if (input.value.trim() !== qv) return; out.innerHTML = '';
       }
-      const res = state.engine.search(qv, { max: 200 });
+      const res = state.engine.search(qv, { max: 200, sids: scope.map((s) => s.id) });
       if (!res.length) { out.append(el('p', { class: 'empty', text: 'Sin resultados.' })); return; }
       const ul = el('ul', { class: 'list' });
       const A1 = (r, c) => { let s = '', n = c + 1; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = ((n - 1 - m) / 26) | 0; } return s + (r + 1); };
@@ -372,7 +403,7 @@ async function openGridIn(host, sidOrName, q) {
   }
   const wrap = el('div', { class: 'screen flush' });
   const select = el('select', { 'aria-label': 'Cambiar de hoja' });
-  for (const s of eng.sheets) { if (s.hidden && s.id !== sh.id && !state.showHidden) continue; select.append(el('option', { value: s.id, text: catalog.infoFor(s).short + (s.hidden ? ' (oculta)' : ''), selected: s.id === sh.id })); }
+  for (const s of eng.sheets) { const hid = catalog.isHiddenSheet(s); if (hid && s.id !== sh.id && !state.showHidden) continue; select.append(el('option', { value: s.id, text: catalog.infoFor(s).short + (hid ? ' (oculta)' : ''), selected: s.id === sh.id })); }
   select.addEventListener('change', () => { const info = catalog.infoFor(eng.sheet(select.value)); ctx.openSheet(select.value, { end: info.end }); });
   const bar = el('div', { class: 'sheetbar' }, el('button', { class: 'btn ghost', 'aria-label': 'Volver a Hojas', html: '&lsaquo; Hojas', onclick: () => ctx.navigate('hojas') }), select);
   const gwrap = el('div', { class: 'sheetwrap' });

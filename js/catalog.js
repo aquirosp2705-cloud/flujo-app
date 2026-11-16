@@ -18,15 +18,18 @@ export const getCatalog = () => CATALOG;
 
 export function infoFor(sheet) {
   const c = CATALOG[sheet.name];
-  return { group: c ? c.group : 'otras', short: c && c.short ? c.short : sheet.name.trim(), desc: c ? (c.desc || '') : '', end: !!(c && c.end), ledger: !!(c && c.ledger) };
+  return { group: c ? c.group : 'otras', short: c && c.short ? c.short : sheet.name.trim(), desc: c ? (c.desc || '') : '', end: !!(c && c.end), ledger: !!(c && c.ledger), hide: !!(c && c.hide) };
 }
+
+/** ¿Se esconde de las listas? (oculta en Excel o marcada "hide" en el catálogo). Los datos y las fórmulas siguen intactos. */
+export function isHiddenSheet(sheet) { return !!sheet.hidden || infoFor(sheet).hide; }
 
 /** Devuelve [{group, items:[{sheet, info}]}] respetando el orden de GROUPS y el del libro dentro de cada grupo. */
 export function groupSheets(sheets, { showHidden = false } = {}) {
   const out = GROUPS.map((g) => ({ group: g, items: [] }));
   const byId = Object.fromEntries(out.map((o) => [o.group.id, o]));
   for (const s of sheets) {
-    if (s.hidden && !showHidden) continue;
+    if (isHiddenSheet(s) && !showHidden) continue;
     const info = infoFor(s);
     (byId[info.group] || byId.otras).items.push({ sheet: s, info });
   }

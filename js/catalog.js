@@ -6,7 +6,7 @@ export const GROUPS = [
   { id: 'tablero', title: 'Tablero', icon: '◧' },
   { id: 'bancos', title: 'Cuentas bancarias', icon: '🏦' },
   { id: 'tarjetas', title: 'Tarjetas de crédito', icon: '💳' },
-  { id: 'credito', title: 'Préstamos, inversiones y pólizas', icon: '📈' },
+  { id: 'credito', title: 'Préstamos y pólizas', icon: '📈' },
   { id: 'servicios', title: 'Servicios y hogar', icon: '💡' },
   { id: 'viajes', title: 'Viajes', icon: '✈️' },
   { id: 'otras', title: 'Otras', icon: '📄' },

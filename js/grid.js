@@ -109,6 +109,9 @@ export class SheetGrid {
   destroy() {
     for (const [t, ev, fn, o] of this._listeners) t.removeEventListener(ev, fn, o);
     this._listeners = []; if (this._ro) this._ro.disconnect();
+    if (this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; }      // un repintado pendiente leería el motor DESPUÉS de soltarlo (p. ej. el visor del archivo lo libera al salir)
+    clearTimeout(this._tt);
+    this.sh = null;                                                           // desde aquí _paint/_updateStatus no hacen nada
     this.root.innerHTML = ''; this.root.classList.remove('fxg');
   }
 
@@ -128,7 +131,23 @@ export class SheetGrid {
     return this;
   }
   refresh() { if (!this.sh) return; this._relayoutIfGrown(); this._paint(true); this._updateBar(); this._updateStatus(); }
-  setReadOnly(v) { this.opts.readOnly = !!v; this.root.classList.toggle('fxg-ro', !!v); }
+  /**
+   * Modo solo lectura (p. ej. el visor del archivo mensual): sin edición, pegado, relleno, borrado ni deshacer; se puede seleccionar,
+   * copiar, cambiar el zoom y moverse. La barra de fórmulas pasa a ser de solo lectura (se puede ver y copiar su contenido).
+   */
+  setReadOnly(v) {
+    const ro = !!v;
+    this.opts.readOnly = ro;
+    this.root.classList.toggle('fxg-ro', ro);
+    if (this.bar) { this.bar.readOnly = ro; if (ro) this.barDirty = false; }
+    if (this.handle && ro) this.handle.style.display = 'none';
+    if (this.tools) {
+      for (const b of this.tools.querySelectorAll('button[data-act]')) {
+        const act = b.dataset.act;
+        b.hidden = ro && (act === 'undo' || act === 'redo' || act === 'paste' || act === 'fill' || act === 'clear' || (act === 'find' && !this.opts.onFind));
+      }
+    }
+  }
   getSelection() { const R = this._rect(); return { sid: this.sid, ...R, active: { ...this.anchor } }; }
   focusGrid() { this._focusKb(); }
   select(r, c, r1 = null, c1 = null, scroll = true) {
@@ -453,7 +472,7 @@ export class SheetGrid {
       if (d.target) this._doFill(d.src, d.target);
     } else if (d.type === 'colresize') {
       if (d.w && Math.abs(d.w - d.w0) > 1) {
-        this.sh.colWidths.set(d.c, Math.round(d.w / this.zoom)); this.eng.dirty.add(this.sid);
+        this.sh.colWidths.set(d.c, Math.round(d.w / this.zoom)); if (!this.opts.readOnly) this.eng.dirty.add(this.sid);   // en solo lectura el ancho es solo de la vista
         this._layout(); this._paint(true); this._afterSelect(false); this.opts.onChange({ sid: this.sid, changes: [], layout: true });
       }
       this.colHdr.style.cursor = '';
@@ -589,13 +608,14 @@ export class SheetGrid {
   }
   _cancelEdit() { if (!this.edit) return; this.edit = null; this.ed.style.display = 'none'; this._focusKb(); this._updateBar(); }
   _commitBar() {
-    if (!this.barDirty || !this.sh) { this.barDirty = false; return; }
+    if (this.opts.readOnly || !this.barDirty || !this.sh) { this.barDirty = false; return; }
     this.barDirty = false;
     const m = this.sh.mergeAt(this.anchor.r, this.anchor.c);
     const r = m ? m.r0 : this.anchor.r, c = m ? m.c0 : this.anchor.c;
     if (this.bar.value !== this._rawText(r, c)) this._applyText(r, c, this.bar.value);
   }
   _applyText(r, c, text) {
+    if (this.opts.readOnly) return;
     const sid = this.sid, sh = this.sh, eng = this.eng;
     const stId = sh.styleAt(r, c), st = eng.styles[stId] || EMPTY;
     let { raw, nf } = parseInput(text, st);
@@ -618,8 +638,8 @@ export class SheetGrid {
     const ch = this.eng.clear(this.sid, R.r0, R.c0, R.r1, R.c1);
     this._afterChange(ch);
   }
-  _undo() { const ch = this.eng.undo(); if (ch === null) this._toast('Nada que deshacer'); else this._afterChange(ch); }
-  _redo() { const ch = this.eng.redo(); if (ch === null) this._toast('Nada que rehacer'); else this._afterChange(ch); }
+  _undo() { if (this.opts.readOnly) return; const ch = this.eng.undo(); if (ch === null) this._toast('Nada que deshacer'); else this._afterChange(ch); }
+  _redo() { if (this.opts.readOnly) return; const ch = this.eng.redo(); if (ch === null) this._toast('Nada que rehacer'); else this._afterChange(ch); }
 
   /* ----------------------------------------------------------------- rellenar */
   _fillDown() {
@@ -637,6 +657,7 @@ export class SheetGrid {
     this._afterChange(ch);
   }
   _doFill(src, tgt) {
+    if (this.opts.readOnly) return;
     let ch = [];
     if (tgt.r1 > src.r1) {
       const rows = src.r1 - src.r0 + 1;
@@ -681,6 +702,7 @@ export class SheetGrid {
     try { await navigator.clipboard.writeText(text); this._toast('Copiado'); } catch (err) { this._toast('Copiado dentro de la app (el navegador no dio acceso al portapapeles)'); }
   }
   async _pasteButton() {
+    if (this.opts.readOnly) return;                // sin pegar (y sin pedir permiso para leer el portapapeles)
     let text = null;
     try { text = await navigator.clipboard.readText(); } catch (err) { text = null; }
     if (text == null && this.clip) text = this.clip.text;

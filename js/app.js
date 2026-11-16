@@ -1,5 +1,5 @@
 /* app.js — arranque, navegación y pantallas base de Flujo.
- * Los módulos grandes (store, sync-github, settings-ui, ledger, dashboard, export, pwa) se cargan de forma opcional:
+ * Los módulos grandes (store, sync-github, settings-ui, ledger, dashboard, quick, archive, export, pwa) se cargan de forma opcional:
  * si alguno falta, la app sigue funcionando sin esa pieza. */
 import { Engine, loadBundle } from './engine.js';
 import { SheetGrid } from './grid.js';
@@ -12,11 +12,13 @@ const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
 const VERSION = '1.0.0';
 
-const state = { engine: null, store: null, sync: null, saver: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
+const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
 /* ------------------------------------------------------------------ contexto compartido con los módulos */
 const ctx = {
   get engine() { return state.engine; }, get store() { return state.store; }, get sync() { return state.sync; }, get saver() { return state.saver; },
+  /** Archivo mensual (js/archive.js): snapshot({key,label,source,replace}) · has(key) · list() · open(key) · info(key) · uploadPending() · resolveConflict(key, 'local'|'remote'). null si el módulo no cargó. */
+  get archive() { return state.archive; },
   ui, catalog, today: todaySerial,
   toast, confirm: ui.confirmDialog, modal: ui.openModal, busy: ui.busy,
   navigate(route) { location.hash = '#/' + String(route).replace(/^#?\/?/, ''); },
@@ -76,7 +78,7 @@ function takePendingPairing() { const c = state.pairingCode || null; state.pairi
 async function boot() {
   applyTheme();
   setBoot('Cargando módulos…', 5);
-  const names = ['store', 'sync-github', 'settings-ui', 'pairing', 'ledger', 'dashboard', 'quick', 'export', 'pwa'];
+  const names = ['store', 'sync-github', 'settings-ui', 'pairing', 'ledger', 'dashboard', 'quick', 'archive', 'export', 'pwa'];
   const mods = await Promise.all(names.map((n) => optional('./' + n + '.js')));
   names.forEach((n, i) => { state.mods[n] = mods[i]; });
   takePairingFromUrl(earlyConnectHash);      // el código que traía la URL al abrir (ya quitado de la barra de direcciones)
@@ -193,6 +195,11 @@ async function startWithBundle(bundle) {
     } catch (e) { console.warn('AutoSaver no disponible', e); }
   }
   if (S && state.store && !state.sync) { try { state.sync = new S.GithubSync(state.store, {}); } catch (e) { console.warn(e); } }
+  const Ar = state.mods.archive;                // archivo mensual: ctx.archive (lo usa también el cierre de mes)
+  if (Ar && Ar.createArchive) {
+    try { state.archive = Ar.createArchive({ getEngine: () => state.engine, getStore: () => state.store, getSync: () => state.sync }); }
+    catch (e) { console.warn('[archivo] no disponible:', e && e.message); }
+  }
   $('#boot').remove(); $('#app').hidden = false;
   $('#side-ver').textContent = 'Versión ' + VERSION;
   // llegó un enlace de conexión a un dispositivo que ya tiene datos: se abre Ajustes (donde está el bloque de pegar el código)
@@ -210,7 +217,7 @@ async function startWithBundle(bundle) {
   await route();
   updatePill();
   if (state.startConflicts && state.startConflicts.length) toast('Hay ' + state.startConflicts.length + ' hoja(s) en conflicto con GitHub: revisa Ajustes → Sincronización.', { type: 'warn', ms: 9000 });
-  if (syncOn()) autoPush();
+  if (syncOn()) { autoPush(); autoArchive(); }
 }
 
 /* ------------------------------------------------------------------ guardado y sincronización */
@@ -268,7 +275,19 @@ function showReloadModal() {
     el('div', { class: 'row end' }, el('button', { class: 'btn primary', text: 'Recargar ahora', onclick: () => location.reload() })));
   ui.openModal(body, { title: 'Hay cambios nuevos', sheet: false, onClose: () => location.reload() });   // cerrar = recargar: seguir editando con datos viejos los pisaría
 }
-async function autoSync() { await checkRemote(); await autoPush(); }
+/** Archivos mensuales guardados aquí y aún sin subir (sin red o sin GitHub al crearlos): se suben solos cuando se puede. Sin nada pendiente no usa la red. */
+async function autoArchive() {
+  const A = state.archive;
+  if (!A || !syncOn() || !state.online || state.archiving) return;
+  state.archiving = true;
+  try {
+    const r = await A.uploadPending({});
+    if (r && r.uploaded && r.uploaded.length) toast('Archivo de ' + r.uploaded.map((k) => A.monthLabel(k)).join(', ') + ' subido a GitHub', { type: 'ok' });
+    if (r && r.conflicts && r.conflicts.length) toast('Hay un archivo mensual con dos versiones distintas: revisa Hojas → Archivo por mes.', { type: 'warn', ms: 8000 });
+  } catch (e) { console.warn('[archivo] no se pudo subir:', e && e.message); }
+  finally { state.archiving = false; }
+}
+async function autoSync() { await checkRemote(); await autoPush(); await autoArchive(); }
 async function onPill() {
   if (!syncOn()) { ctx.navigate('ajustes'); return; }
   await autoSync();
@@ -306,7 +325,7 @@ function applyTheme() {
 function setTheme(t) { try { localStorage.setItem('fx-theme', t); } catch (e) { /* */ } applyTheme(); }
 
 /* ------------------------------------------------------------------ navegación */
-const TITLES = { resumen: 'Resumen', mov: 'Movimientos', reg: 'Anotar', hojas: 'Hojas', hoja: 'Hoja', buscar: 'Buscar', ajustes: 'Ajustes' };
+const TITLES = { resumen: 'Resumen', mov: 'Movimientos', reg: 'Anotar', hojas: 'Hojas', hoja: 'Hoja', archivo: 'Archivo', buscar: 'Buscar', ajustes: 'Ajustes' };
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, ''); const [path, qs] = h.split('?'); const parts = path.split('/');
   return { name: parts[0] || 'resumen', arg: parts.slice(1).join('/') || null, q: new URLSearchParams(qs || '') };
@@ -328,8 +347,8 @@ async function route() {
   const host = $('#screens'); host.innerHTML = '';
   const view = el('div', { class: 'view', style: { display: 'contents' } }); host.append(view);   // contenedor propio de esta ruta
   const key = SCREENS[name] ? name : 'resumen';
-  $('#app').classList.toggle('route-hoja', key === 'hoja' || (key === 'resumen' && !state.mods.dashboard));
-  document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === (key === 'hoja' ? 'hojas' : key)));
+  $('#app').classList.toggle('route-hoja', key === 'hoja' || (key === 'archivo' && !!arg) || (key === 'resumen' && !state.mods.dashboard));   // el visor del archivo también es una hoja: barra superior compacta
+  document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === (key === 'hoja' || key === 'archivo' ? 'hojas' : key)));
   $('#title').textContent = TITLES[key];
   document.title = TITLES[key] + ' · Flujo';
   let obj = null;
@@ -445,8 +464,21 @@ const SCREENS = {
   },
   async hojas(host) {
     const wrap = el('div', { class: 'screen' }); host.append(wrap);
+    /** Tarjeta de arriba: entrada al archivo mensual (copias de todas las hojas, mes a mes). */
+    const archiveCard = () => {
+      if (!state.archive || !state.mods.archive || !state.mods.archive.mount) return null;
+      const sub = el('div', { class: 's', text: 'Una copia de todas las hojas de cada cierre, para consultarla cuando quieras' });
+      const card = el('div', { class: 'card arc-entry' }, el('ul', { class: 'list' }, el('li', { class: 'arc-entry-li', 'data-go': 'archivo', style: { cursor: 'pointer' }, role: 'button', tabindex: '0', onclick: () => ctx.navigate('archivo'),
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ctx.navigate('archivo'); } } },
+      el('span', { class: 'arc-entry-ic', 'aria-hidden': 'true', text: '📅' }),
+      el('div', { class: 'grow' }, el('div', { class: 't', text: 'Archivo por mes' }), sub),
+      el('span', { class: 'muted', html: '&rsaquo;' }))));
+      state.archive.count().then((n) => { if (n > 0 && sub.isConnected) sub.textContent = (n === 1 ? '1 mes guardado' : n + ' meses guardados') + ' · toca para consultarlos'; }).catch(() => { });
+      return card;
+    };
     const render = () => {
       wrap.innerHTML = '';
+      const ac = archiveCard(); if (ac) wrap.append(ac);
       const hiddenCount = state.engine.sheets.filter(catalog.isHiddenSheet).length;
       for (const g of catalog.groupSheets(state.engine.sheets, { showHidden: state.showHidden })) {
         const card = el('div', { class: 'card' }, el('h2', { text: g.group.icon + '  ' + g.group.title }));
@@ -465,6 +497,16 @@ const SCREENS = {
     render();
   },
   async hoja(host, sid, q) { return openGridIn(host, sid, q); },
+  /** Archivo mensual: #/archivo = lista de cierres · #/archivo/AAAA-MM = visor de solo lectura (js/archive.js) */
+  async archivo(host, arg, q) {
+    const A = state.mods.archive;
+    const wrap = el('div', { class: 'screen' }); host.append(wrap);
+    if (!A || !A.mount || !state.archive) {
+      wrap.append(el('div', { class: 'card' }, el('h2', { text: 'Archivo' }), el('p', { class: 'muted', text: 'El archivo mensual no está disponible en esta versión.' })));
+      return {};
+    }
+    return A.mount(wrap, ctx, arg, q);
+  },
   async buscar(host) {
     const wrap = el('div', { class: 'screen' }); host.append(wrap);
     const input = el('input', { type: 'search', placeholder: 'Buscar en todas las hojas (texto, valores, fórmulas)…', 'aria-label': 'Buscar', autofocus: true });
@@ -578,7 +620,9 @@ function screenAjustes(host) {
     el('p', { class: 'small muted', text: 'Hojas: ' + eng.sheets.length + ' · motor listo en ' + ((state.buildMs || 0) / 1000).toFixed(1) + ' s · versión ' + VERSION }));
   if (state.store) dev.append(el('div', { class: 'row' },
     el('button', { class: 'btn danger', text: 'Borrar datos de este dispositivo', onclick: async () => {
-      if (await ui.confirmDialog('Se borrarán los datos guardados en este dispositivo (no los de GitHub). ¿Continuar?', { ok: 'Borrar', danger: true })) { await state.store.clearAll(); location.reload(); }
+      let extra = '';                                                       // los archivos mensuales que aún no llegaron a GitHub se perderían con el borrado
+      try { const n = state.archive ? await state.archive.unsyncedCount() : 0; if (n > 0) extra = ' Ojo: ' + (n === 1 ? 'hay 1 archivo mensual guardado' : 'hay ' + n + ' archivos mensuales guardados') + ' solo en este dispositivo (aún sin subir a GitHub) y también se borraría.'; } catch (e) { /* sin aviso extra */ }
+      if (await ui.confirmDialog('Se borrarán los datos guardados en este dispositivo (no los de GitHub).' + extra + ' ¿Continuar?', { ok: 'Borrar', danger: true })) { await state.store.clearAll(); location.reload(); }
     } })));
   wrap.append(dev);
 

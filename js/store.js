@@ -17,6 +17,10 @@
  *   - Dentro de una transacción (store.tx) solo se puede esperar (await) a peticiones de IndexedDB, no a fetch ni timers.
  *
  * El token de GitHub vive únicamente en kv 'github' (lo escribe sync-github.js). exportAll() NUNCA lo incluye.
+ *
+ * Claves internas del almacén kv: todo lo que empieza con «_» es interno y NO entra en los respaldos (exportAll) ni se
+ * restaura con replaceAll. El archivo mensual (js/archive.js) usa «_arch:AAAA-MM» (los bytes comprimidos de cada mes) y
+ * «_arch:index» (el índice). Se leen y escriben con store.tx() sobre el almacén 'kv' que ya existe (sin subir DB_VERSION).
  */
 
 export const DB_NAME = 'flujoweb';
@@ -35,6 +39,12 @@ export const KV = Object.freeze({
   LAST_ERROR: 'syncLastError' // {code, message, at}
 });
 const RESERVED_KEYS = new Set(Object.values(KV));
+
+/** Prefijo de las claves del archivo mensual en el almacén kv (internas: fuera de los respaldos). */
+export const ARCHIVE_PREFIX = '_arch:';
+export const ARCHIVE_INDEX_KEY = ARCHIVE_PREFIX + 'index';
+/** ¿Esta clave de kv es interna (token, estado de sincronización, archivo mensual…) y por tanto no es un «ajuste» respaldable? */
+export const isInternalKey = (k) => RESERVED_KEYS.has(k) || String(k)[0] === '_';
 
 /* ------------------------------------------------------------------ errores */
 
@@ -473,13 +483,15 @@ export class Store {
    */
   async exportAll() {
     const snap = await this.tx(['meta', 'sheets', 'kv'], 'readonly', async (t) => {
-      const [meta, sk, sv, kk, kvv] = await Promise.all([t.get('meta', 'meta'), t.keys('sheets'), t.all('sheets'), t.keys('kv'), t.all('kv')]);
+      const [meta, sk, sv, allKeys] = await Promise.all([t.get('meta', 'meta'), t.keys('sheets'), t.all('sheets'), t.keys('kv')]);
+      const kk = allKeys.filter((k) => !isInternalKey(k));          // el token, el estado de sincronización y el archivo mensual (_arch:…) ni se leen
+      const kvv = await Promise.all(kk.map((k) => t.get('kv', k)));
       return { meta, sk, sv, kk, kvv };
     }, { action: 'leer los datos para el respaldo' });
     const sheetDatas = {};
     snap.sk.forEach((k, i) => { sheetDatas[k] = snap.sv[i]; });
     const settings = {};
-    snap.kk.forEach((k, i) => { if (!RESERVED_KEYS.has(k) && k[0] !== '_') settings[k] = snap.kvv[i]; });
+    snap.kk.forEach((k, i) => { settings[k] = snap.kvv[i]; });
     return { app: 'FlujoWeb', format: 'flujoweb-backup', version: 1, exportedAt: new Date().toISOString(), meta: snap.meta || null, sheetDatas, settings };
   }
 

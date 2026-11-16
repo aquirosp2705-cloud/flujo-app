@@ -5,6 +5,10 @@
  *                           lastSync · syncConflicts · syncLastError          (ver KV en store.js)
  * "id" = id de hoja ("s14") o 'meta' para meta.json.
  *
+ * Archivo mensual (js/archive.js):  archivo/AAAA-MM.json.gz  (o .json si el navegador no pudo comprimir), en la misma rama.
+ * NO forma parte de la sincronización normal: idFromPath() devuelve null para esas rutas, así que pullAll/pushDirty/
+ * initialUpload/rebuildPending ni las ven ni las descargan. Solo lo tocan archiveList() / archivePut() / archiveGet().
+ *
  * Reglas de seguridad
  *   - El token solo existe en IndexedDB (kv 'github') y en memoria dentro de un WeakMap privado de este módulo:
  *     no es propiedad del objeto (console.log(sync) no lo muestra), nunca va en URL, ni en mensajes de error, ni en consola.
@@ -107,6 +111,20 @@ export const idFromPath = (p) => {
   const m = /^sheets\/([A-Za-z0-9_-]+)\.json$/.exec(p);
   return m ? m[1] : null;
 };
+
+/* ---- archivo mensual: archivo/AAAA-MM.json.gz ---- */
+export const ARCHIVE_DIR = 'archivo';
+export const RE_ARCHIVE_KEY = /^\d{4}-(?:0[1-9]|1[0-2])$/;
+const RE_ARCHIVE_PATH = /^archivo\/(\d{4}-(?:0[1-9]|1[0-2]))\.json(\.gz)?$/;
+const MONTHS_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+/** 'AAAA-MM' → ruta en el repositorio (con .gz si el contenido va comprimido). */
+export const archivePathFromKey = (key, gz = true) => ARCHIVE_DIR + '/' + key + (gz ? '.json.gz' : '.json');
+/** Ruta del repositorio → 'AAAA-MM', o null si no es un archivo mensual. */
+export const archiveKeyFromPath = (p) => { const m = RE_ARCHIVE_PATH.exec(p); return m ? m[1] : null; };
+/** ¿Empiezan los bytes con la marca de gzip (1f 8b)? */
+export const isGzipBytes = (b) => !!b && b.length >= 3 && b[0] === 0x1f && b[1] === 0x8b;
+/** '2026-11' → 'noviembre 2026' (para mensajes). */
+export const archiveLabel = (key) => { const m = /^(\d{4})-(\d{2})$/.exec(String(key)); return m && MONTHS_ES[+m[2] - 1] ? MONTHS_ES[+m[2] - 1] + ' ' + m[1] : String(key); };
 
 /* ================================================================ errores */
 
@@ -484,27 +502,35 @@ export class GithubSync {
     return info;
   }
 
-  /** Árbol recursivo de la rama: {empty, files: Map(id → {path, sha, size}), truncated}. Repo vacío → empty:true. */
+  /**
+   * Árbol recursivo de la rama: {empty, files: Map(id → {path, sha, size}), archive: Map(clave → {key, path, sha, size, gz}), truncated}.
+   * `files` solo trae lo que sincroniza la app (meta.json y sheets/); `archive`, los archivos mensuales de archivo/. Repo vacío → empty:true.
+   */
   async _getTree({ signal } = {}) {
     try {
       const r = await this._api('GET', this._repoPath() + '/git/trees/' + encodeURIComponent(this._cfg.branch), { query: { recursive: '1' }, ctx: 'tree', signal });
       const j = r.json || {};
       const files = new Map();
+      const archive = new Map();
       for (const e of j.tree || []) {
         if (e.type !== 'blob') continue;
         const id = idFromPath(e.path);
-        if (id) files.set(id, { path: e.path, sha: e.sha, size: e.size });
+        if (id) { files.set(id, { path: e.path, sha: e.sha, size: e.size }); continue; }
+        const key = archiveKeyFromPath(e.path);
+        if (key) {
+          const gz = e.path.endsWith('.gz');
+          if (gz || !archive.has(key)) archive.set(key, { key, path: e.path, sha: e.sha, size: e.size, gz });   // si están las dos variantes manda la comprimida
+        }
       }
-      return { empty: false, files, truncated: !!j.truncated };
+      return { empty: false, files, archive, truncated: !!j.truncated };
     } catch (e) {
-      if (e instanceof GithubError && e.code === 'EMPTY_REPO') return { empty: true, files: new Map(), truncated: false };
+      if (e instanceof GithubError && e.code === 'EMPTY_REPO') return { empty: true, files: new Map(), archive: new Map(), truncated: false };
       throw e;
     }
   }
 
-  /** Descarga un blob por sha, verifica su huella y lo decodifica como UTF-8. */
-  async _getBlobText(id, sha, { signal } = {}) {
-    const path = pathFromId(id);
+  /** Descarga un blob por sha y verifica su huella git (reintenta si llegó dañado). Devuelve los bytes tal cual. `path` solo sirve para los mensajes. */
+  async _getBlobBytes(path, sha, { signal } = {}) {
     for (let attempt = 0; ; attempt++) {
       const r = await this._api('GET', this._repoPath() + '/git/blobs/' + encodeURIComponent(sha), { accept: 'application/vnd.github.raw+json', as: 'bytes', ctx: 'blob', signal });
       let bytes = r.bytes;
@@ -515,13 +541,18 @@ export class GithubSync {
           if (env && env.encoding === 'base64' && typeof env.content === 'string') { bytes = base64ToBytes(env.content); got = await gitBlobSha(bytes); }
         } catch (_) { /* no era un sobre */ }
       }
-      if (got === sha) {
-        try { return utf8Decode(bytes); }
-        catch (_) { throw this._err('CORRUPT', 'El archivo «' + path + '» de GitHub no es texto UTF-8 válido.'); }
-      }
+      if (got === sha) return bytes;
       if (attempt >= 2) throw this._err('CORRUPT', 'El archivo «' + path + '» llegó dañado desde GitHub (la huella no coincide). Inténtalo de nuevo.');
       await this._sleep(this._backoff(attempt + 1), signal);
     }
+  }
+
+  /** Descarga un blob por sha, verifica su huella y lo decodifica como UTF-8. */
+  async _getBlobText(id, sha, { signal } = {}) {
+    const path = pathFromId(id);
+    const bytes = await this._getBlobBytes(path, sha, { signal });
+    try { return utf8Decode(bytes); }
+    catch (_) { throw this._err('CORRUPT', 'El archivo «' + path + '» de GitHub no es texto UTF-8 válido.'); }
   }
 
   _parseRemote(id, text) {
@@ -834,10 +865,12 @@ export class GithubSync {
   /**
    * PUT /contents con control de sha. Ante 409/422 vuelve a mirar el sha remoto: si es el mismo que enviamos es una carrera
    * pasajera (reintenta con backoff); si cambió de verdad, lanza CONFLICT (no sobrescribe).
-   * @param {string} id @param {{bytes:Uint8Array, sha:string}} enc @param {{sha?:string, empty?:boolean, message:string, info:object, signal?:AbortSignal}} o
+   * @param {string} id @param {{bytes:Uint8Array, sha:string}} enc @param {{sha?:string, empty?:boolean, message:string, info:object, signal?:AbortSignal,
+   *   path?:string, lookup?:(tree:object)=>({sha:string}|undefined)}} o
+   *   path/lookup: para archivos que no son hojas (archivo mensual): la ruta explícita y cómo encontrar su entrada en el árbol recién leído.
    */
-  async _putFile(id, enc, { sha, empty, message, info, signal }) {
-    const path = pathFromId(id);
+  async _putFile(id, enc, { sha, empty, message, info, signal, path: pathOverride, lookup }) {
+    const path = pathOverride || pathFromId(id);
     const b64 = bytesToBase64(enc.bytes);
     let sent = sha || null;
     for (let attempt = 0; ; attempt++) {
@@ -851,6 +884,7 @@ export class GithubSync {
         const newSha = j.content && j.content.sha;
         if (!newSha) throw this._err('BAD_RESPONSE', 'GitHub no confirmó el archivo subido (' + path + ').');
         if (newSha !== enc.sha) throw this._err('CORRUPT', 'GitHub guardó «' + path + '» con una huella distinta a la enviada (posible corrupción). Vuelve a intentarlo.');
+        this._lastPutAt = Date.now();
         return { sha: newSha, commit: j.commit && j.commit.sha, created: r.status === 201 };
       } catch (e) {
         // 404 pasajero justo después de que el primer commit creó la rama: se espera y se reintenta
@@ -858,7 +892,7 @@ export class GithubSync {
         if (!(e instanceof GithubError) || (e.status !== 409 && e.status !== 422)) throw e;
         if (attempt >= 3) throw this._err('REJECTED', 'GitHub no aceptó la subida de «' + path + '» tras varios intentos (error ' + e.status + '). Inténtalo de nuevo en unos minutos.' + (e.githubMessage ? ' [' + String(e.githubMessage).slice(0, 120) + ']' : ''), { status: e.status, githubMessage: e.githubMessage });
         const fresh = await this._getTree({ signal });
-        const cur = fresh.files.get(id);
+        const cur = lookup ? lookup(fresh) : fresh.files.get(id);
         if (cur && cur.sha === enc.sha) return { sha: cur.sha, commit: null, created: false, adopted: true };   // ya está igual en GitHub
         if (!cur) { sent = null; continue; }                                                                    // el archivo desapareció: crear
         if (cur.sha === sent) { await this._sleep(this._backoff(attempt + 1), signal); continue; }              // carrera pasajera: reintentar
@@ -1047,5 +1081,97 @@ export class GithubSync {
       return [...pend];
     });
     return { ok: true, pending: pend };
+  }
+
+  /* ================================================================ archivo mensual (archivo/AAAA-MM.json.gz)
+   * Tres operaciones, todas serializadas con pull/push (mismo candado) y SIN tocar el estado de sincronización normal
+   * (no cambian lastSync / syncLastError / pendientes): el archivo es un anexo, no parte del libro.
+   * La clave es 'AAAA-MM'. El contenido son bytes (JSON comprimido con gzip, o JSON si el navegador no pudo comprimir). */
+
+  _requireArchiveKey(key) {
+    if (typeof key !== 'string' || !RE_ARCHIVE_KEY.test(key)) throw this._err('BAD_KEY', 'La clave del archivo no es válida (debe ser AAAA-MM, por ejemplo 2026-11).');
+  }
+
+  /**
+   * Lista los archivos mensuales de GitHub (carpeta archivo/), del más reciente al más antiguo.
+   * @param {{signal?:AbortSignal}} [opts]
+   * @returns {Promise<{key:string, name:string, path:string, size:number, sha:string, gz:boolean}[]>}  (la propiedad `truncated` indica árbol incompleto)
+   */
+  archiveList(opts = {}) { return this._locked(() => this._archiveList(opts)); }
+
+  async _archiveList({ signal } = {}) {
+    this._requireConfig();
+    const tree = await this._getTree({ signal });
+    const list = [...tree.archive.values()]
+      .sort((a, b) => (a.key < b.key ? 1 : a.key > b.key ? -1 : 0))
+      .map((e) => ({ key: e.key, name: e.path.slice(ARCHIVE_DIR.length + 1), path: e.path, size: e.size, sha: e.sha, gz: e.gz }));
+    Object.defineProperty(list, 'truncated', { value: !!tree.truncated, enumerable: false });
+    return list;
+  }
+
+  /**
+   * Sube el archivo de un mes a archivo/AAAA-MM.json.gz (o .json si los bytes no van comprimidos).
+   * Si ya hay uno distinto en GitHub NO lo pisa: lanza GithubError con code 'EXISTS' («ya existe»), salvo que se pase replace:true
+   * (entonces usa el sha actual del archivo). Si ya hay uno idéntico no hace nada ({unchanged:true}). Para reemplazar se conserva la
+   * ruta que ya tenía (la extensión es solo una pista: al leer se detecta el formato por los bytes).
+   * @param {string} key 'AAAA-MM' @param {Uint8Array} bytes
+   * @param {{replace?:boolean, signal?:AbortSignal}} [opts]
+   * @returns {Promise<{ok:true, key:string, path:string, sha:string, created:boolean, replaced:boolean, unchanged:boolean}>}
+   */
+  archivePut(key, bytes, opts = {}) { return this._locked(() => this._archivePut(key, bytes, opts)); }
+
+  async _archivePut(key, bytes, { replace = false, signal } = {}) {
+    this._requireConfig();
+    this._requireArchiveKey(key);
+    if (!(bytes instanceof Uint8Array) || !bytes.length) throw this._err('NO_DATA', 'No hay contenido que subir al archivo.');
+    const info = await this._assertWritable({ signal });
+    const label = archiveLabel(key);
+    const enc = { bytes, sha: await gitBlobSha(bytes) };
+    const lookup = (t) => t.archive.get(key);
+    let tree = await this._getTree({ signal });
+    for (let round = 0; ; round++) {
+      const cur = lookup(tree) || null;
+      if (cur && cur.sha === enc.sha) return { ok: true, key, path: cur.path, sha: cur.sha, created: false, replaced: false, unchanged: true };
+      if (cur && !replace) throw this._err('EXISTS', 'Ya existe en GitHub un archivo de ' + label + ' distinto al de este dispositivo. No se sobrescribió nada.', { status: 422, remoteSha: cur.sha });
+      const path = cur ? cur.path : archivePathFromKey(key, isGzipBytes(bytes));
+      const gap = this._cfg.putDelayMs - (Date.now() - (this._lastPutAt || 0));     // GitHub pide ≥1 s entre escrituras seguidas
+      if (gap > 0) await this._sleep(gap, signal);
+      try {
+        const out = await this._putFile(null, enc, {
+          sha: cur ? cur.sha : undefined, empty: tree.empty, message: 'Flujo: archivo ' + key + ' · ' + new Date().toISOString(), info, signal, path, lookup
+        });
+        return { ok: true, key, path, sha: out.sha, created: !cur, replaced: !!cur, unchanged: !!out.adopted };
+      } catch (e) {
+        if (!(e instanceof GithubError) || e.code !== 'CONFLICT') throw e;
+        // alguien cambió el archivo entre tu lectura y la subida
+        if (!replace || round >= 1) throw this._err('EXISTS', 'Ya existe en GitHub un archivo de ' + label + ' distinto al de este dispositivo. No se sobrescribió nada.', { status: e.status, remoteSha: e.remoteSha });
+        tree = await this._getTree({ signal });                  // con replace:true se reintenta una vez con el sha vigente
+      }
+    }
+  }
+
+  /**
+   * Descarga los bytes del archivo de un mes y verifica su huella git. `sha` (de archiveList) ahorra una consulta del árbol.
+   * @param {string} key @param {{sha?:string, signal?:AbortSignal}} [opts]
+   * @returns {Promise<{key:string, path:string, sha:string, bytes:Uint8Array, gz:boolean}>}
+   */
+  archiveGet(key, opts = {}) { return this._locked(() => this._archiveGet(key, opts)); }
+
+  async _archiveGet(key, { sha, signal } = {}) {
+    this._requireConfig();
+    this._requireArchiveKey(key);
+    let entry = sha ? { key, sha, path: archivePathFromKey(key, true) } : null;
+    if (!entry) {
+      const tree = await this._getTree({ signal });
+      entry = tree.archive.get(key) || null;
+      if (!entry) throw this._err('NOT_FOUND', 'En GitHub no hay un archivo de ' + archiveLabel(key) + '.');
+    }
+    let bytes;
+    try { bytes = await this._getBlobBytes(entry.path, entry.sha, { signal }); }
+    catch (e) {
+      if (e instanceof GithubError && e.status === 404) throw this._err('NOT_FOUND', 'En GitHub ya no está el archivo de ' + archiveLabel(key) + ' (cambió o se borró). Actualiza la lista.', { status: 404 });
+      throw e;
+    }
+    return { key, path: entry.path, sha: entry.sha, bytes, gz: isGzipBytes(bytes) };
   }
 }

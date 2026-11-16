@@ -14,6 +14,7 @@ No necesita Excel, Microsoft 365 ni ningún plan de pago: la app es gratuita (Gi
 | **Movimientos** | Elige una cuenta, mira sus últimos movimientos y agrega uno nuevo (la app escribe en la primera fila libre sin romper fórmulas). |
 | **Anotar** (el botón +) | Lista de tus hojas (cuentas y tarjetas): eliges una y **se abre esa hoja en la primera fila libre**, lista para escribir el movimiento. Es la misma lista que sale al pulsar «+ Movimiento». |
 | **Hojas** | Las hojas de tu libro, con las mismas fórmulas: edita celdas, copia y pega, rellena hacia abajo, deshaz. |
+| **Archivo por mes** (dentro de Hojas) | Una copia de TODAS tus hojas tal como estaban al cerrar cada mes (con los valores que veías, sin fórmulas). Se consulta en solo lectura, con selector de hoja y botón para descargar el Excel. «Guardar el estado de hoy» crea la copia del mes a mano; al cerrar el mes se guarda sola. Se guarda en el dispositivo y se sube a `archivo/AAAA-MM.json.gz` de tu repositorio privado, así la ves también desde el celular. |
 | **Buscar** | Busca un texto o valor en todas las hojas a la vez. |
 | **Ajustes** | Sincronización con GitHub, **código de conexión** para enlazar otro dispositivo, exportar a Excel (.xlsx), respaldo (.json), tema claro/oscuro, instalar la app. |
 
@@ -74,6 +75,7 @@ esa copia es la que se sube al repositorio privado. Al abrir la app, cada dispos
 * `tools/` — `convert.py` (Excel → datos), `drop_sheets.py` (quitar hojas), `publish.py` (publicar app y datos), `make_icons.py`.
 * `js/ledger.js`, `js/dashboard.js`, `js/quick.js` — movimientos bancarios, resumen y capturas rápidas.
 * `js/invest.js` — tarjeta «Inversiones» del Resumen: lee las pólizas de la hoja de pólizas y suma el total invertido y el total por banco (con los ahorros a plazo aparte y la explicación de por qué el patrimonio cuenta menos).
+* `js/archive.js` — archivo mensual: congela las hojas como valores, las comprime (gzip), las guarda en IndexedDB y las sube a `archivo/` del repositorio privado; trae la pantalla de lista y el visor de solo lectura (`css/archive.css`). Pruebas: `test/archive-test.html`.
 * `js/export.js` — exportación a `.xlsx` y respaldo `.json`. `js/pwa.js` + `sw.js` — instalación y modo sin conexión.
 * `test/` — páginas de prueba que se abren en el navegador (`test/verify.html` compara el motor con los valores calculados por Excel: 28 901 de 28 908 fórmulas iguales, 99,98 %).
 

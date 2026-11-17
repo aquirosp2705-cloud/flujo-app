@@ -1027,7 +1027,7 @@ export function mount(host, ctx, opts = {}) {
   /** Guarda el archivo del mes (si existe el módulo) y SOLO entonces escribe el cierre. Devuelve {ok} o {ok:false, error}. */
   async function doClose(plan, { onStatus }) {
     const A = ctx.archive;
-    let archived = false;
+    let archived = false, archiveConflict = false;
     try {
       if (A && typeof A.snapshot === 'function') {
         onStatus('Guardando el archivo del mes…');
@@ -1038,6 +1038,7 @@ export function mount(host, ctx, opts = {}) {
         } catch (e) { r = { ok: false, error: (e && e.message) || String(e) }; }
         if (!r || r.ok !== true) return { ok: false, error: `No se pudo guardar el archivo del mes${r && r.error ? ' (' + r.error + ')' : ''}. No se cerró nada: la hoja está igual que antes. Puedes volver a intentarlo.` };
         archived = true;
+        archiveConflict = r.conflict === true;                                // en GitHub ya había OTRA versión de ese mes: se guardó aquí sin pisarla
       }
       onStatus('Cerrando el mes…');
       const res = applyClose(eng(), plan, { confirmed: true });              // vuelve a planificar: si la hoja cambió mientras se guardaba el archivo, no escribe
@@ -1048,7 +1049,7 @@ export function mount(host, ctx, opts = {}) {
       if (!S.destroyed) {
         const mn = cap(monthName(plan.month.label));
         const extras = archived && ctx.navigate ? [{ text: 'Ver archivo', run: () => ctx.navigate('archivo/' + plan.month.key) }] : [];
-        setUndo(`${mn} cerrado.${archived ? ' Archivo guardado.' : ''}${plan.yearEnd ? ` Ya está abierto ${plan.next.year}.` : ''}`, undoLastClose, { custom: true, extras, ms: 120000 });
+        setUndo(`${mn} cerrado.${archived ? ' Archivo guardado.' : ''}${archiveConflict ? ' En GitHub ya había otra versión de ese mes y no se pisó: elige cuál conservar en Hojas → Archivo por mes.' : ''}${plan.yearEnd ? ` Ya está abierto ${plan.next.year}.` : ''}`, undoLastClose, { custom: true, extras, ms: 120000 });
       }
       afterWrite();
       notify('ok', `${cap(monthName(plan.month.label))} cerrado`);

@@ -1114,13 +1114,15 @@ export class GithubSync {
    * Si ya hay uno distinto en GitHub NO lo pisa: lanza GithubError con code 'EXISTS' («ya existe»), salvo que se pase replace:true
    * (entonces usa el sha actual del archivo). Si ya hay uno idéntico no hace nada ({unchanged:true}). Para reemplazar se conserva la
    * ruta que ya tenía (la extensión es solo una pista: al leer se detecta el formato por los bytes).
+   * Con replace:true y baseSha (el sha de la versión de GitHub que se decidió reemplazar; null = ninguna) solo se reemplaza si GitHub SIGUE con esa
+   * versión; si otro dispositivo la cambió (o apareció una) lanza EXISTS sin escribir nada. Sin baseSha (undefined) reemplaza la que haya.
    * @param {string} key 'AAAA-MM' @param {Uint8Array} bytes
-   * @param {{replace?:boolean, signal?:AbortSignal}} [opts]
+   * @param {{replace?:boolean, baseSha?:string|null, signal?:AbortSignal}} [opts]
    * @returns {Promise<{ok:true, key:string, path:string, sha:string, created:boolean, replaced:boolean, unchanged:boolean}>}
    */
   archivePut(key, bytes, opts = {}) { return this._locked(() => this._archivePut(key, bytes, opts)); }
 
-  async _archivePut(key, bytes, { replace = false, signal } = {}) {
+  async _archivePut(key, bytes, { replace = false, baseSha, signal } = {}) {
     this._requireConfig();
     this._requireArchiveKey(key);
     if (!(bytes instanceof Uint8Array) || !bytes.length) throw this._err('NO_DATA', 'No hay contenido que subir al archivo.');
@@ -1133,6 +1135,7 @@ export class GithubSync {
       const cur = lookup(tree) || null;
       if (cur && cur.sha === enc.sha) return { ok: true, key, path: cur.path, sha: cur.sha, created: false, replaced: false, unchanged: true };
       if (cur && !replace) throw this._err('EXISTS', 'Ya existe en GitHub un archivo de ' + label + ' distinto al de este dispositivo. No se sobrescribió nada.', { status: 422, remoteSha: cur.sha });
+      if (cur && replace && baseSha !== undefined && cur.sha !== baseSha) throw this._err('EXISTS', 'En GitHub el archivo de ' + label + ' cambió desde que se decidió reemplazarlo (se modificó en otro dispositivo). No se sobrescribió nada.', { status: 422, remoteSha: cur.sha });
       const path = cur ? cur.path : archivePathFromKey(key, isGzipBytes(bytes));
       const gap = this._cfg.putDelayMs - (Date.now() - (this._lastPutAt || 0));     // GitHub pide ≥1 s entre escrituras seguidas
       if (gap > 0) await this._sleep(gap, signal);

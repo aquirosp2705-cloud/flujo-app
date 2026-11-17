@@ -14,7 +14,7 @@ No necesita Excel, Microsoft 365 ni ningún plan de pago: la app es gratuita (Gi
 | **Movimientos** | Elige una cuenta, mira sus últimos movimientos y agrega uno nuevo (la app escribe en la primera fila libre sin romper fórmulas). |
 | **Anotar** (el botón +) | Lista de tus hojas (cuentas y tarjetas): eliges una y **se abre esa hoja en la primera fila libre**, lista para escribir el movimiento. Es la misma lista que sale al pulsar «+ Movimiento». |
 | **Hojas** | Las hojas de tu libro, con las mismas fórmulas: edita celdas, copia y pega, rellena hacia abajo, deshaz. |
-| **Archivo por mes** (dentro de Hojas) | Una copia de TODAS tus hojas tal como estaban al cerrar cada mes (con los valores que veías, sin fórmulas). Se consulta en solo lectura, con selector de hoja y botón para descargar el Excel. «Guardar el estado de hoy» crea la copia del mes a mano; al cerrar el mes se guarda sola. Se guarda en el dispositivo y se sube a `archivo/AAAA-MM.json.gz` de tu repositorio privado, así la ves también desde el celular. |
+| **Archivo por mes** (dentro de Hojas) | Una copia de TODAS tus hojas tal como estaban al cerrar cada mes (con los valores que veías, sin fórmulas). Se consulta en solo lectura, con selector de hoja y botón para descargar el Excel. «Guardar el estado de hoy» crea la copia del mes a mano; al cerrar el mes se guarda sola. Se guarda en el dispositivo y se sube a `archivo/AAAA-MM.json.gz` de tu repositorio privado, así la ves también desde el celular. Si un mismo mes tiene dos versiones distintas (la de este dispositivo y otra en GitHub), la app no pisa ninguna: puedes verlas y elegir cuál conservar, y un reemplazo hecho sin conexión tampoco pisa lo que otro dispositivo haya cambiado mientras tanto. Los archivos no van dentro del respaldo (.json): ya están en GitHub. |
 | **Buscar** | Busca un texto o valor en todas las hojas a la vez. |
 | **Ajustes** | Sincronización con GitHub, **código de conexión** para enlazar otro dispositivo, exportar a Excel (.xlsx), respaldo (.json), tema claro/oscuro, instalar la app. |
 
@@ -30,7 +30,7 @@ Antes de escribir nada muestra una **vista previa** en lenguaje sencillo, con av
 
 Tus datos siguen en GitHub. Al conectar, la app ofrece guardar el token en el administrador de contraseñas del navegador; si después los datos desaparecen, al abrir la app se reconecta sola (o con el botón «Usar el token guardado en el navegador») y baja todo de GitHub. Conectar por primera vez ya trae los datos en un solo paso.
 
-**Cerrar Flujo** (menú lateral y Ajustes → Este dispositivo) guarda y sube lo pendiente y cierra la ventana. La app se abre en una sola ventana.
+**Cerrar Flujo** (menú lateral y Ajustes → Este dispositivo) guarda y sube lo pendiente y cierra la ventana (si no pudo guardar en este dispositivo, avisa y NO cierra). La app se abre en una sola ventana: en un mismo navegador solo puede haber una ventana o pestaña de Flujo a la vez; si abres una segunda, avisa y espera a que cierres la otra (así una ventana vieja no pisa lo que guardó la nueva, por ejemplo un cierre de mes).
 
 **Fórmulas como en Excel:** un `+` o `-` al principio empieza una fórmula (`+H2050+E2051`); mientras la escribes, un clic en otra celda (o una flecha) inserta su dirección, arrastrar inserta un rango y Mayús+clic lo extiende. Otro clic seguido cambia la celda apuntada.
 

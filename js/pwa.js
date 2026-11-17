@@ -120,7 +120,13 @@ let cfg = {};
 async function reloadNow() {
   if (reloading) return;
   reloading = true;
-  try { if (typeof cfg.beforeReload === 'function') await cfg.beforeReload(); } catch (e) { console.warn(e); }
+  try { if (typeof cfg.beforeReload === 'function') await cfg.beforeReload(); }
+  catch (e) {
+    // no se pudo guardar lo pendiente: recargar ahora lo perdería. Se avisa y la página sigue abierta (no se pierde nada).
+    console.warn(e); reloading = false; updateRequested = false;
+    try { if (typeof cfg.onReloadBlocked === 'function') cfg.onReloadBlocked(e); } catch (_) { /* nada */ }
+    return;
+  }
   location.reload();
 }
 
@@ -164,7 +170,9 @@ export function getServiceWorkerVersion(timeoutMs = 1500) {
  *        Si no se indica, se muestra el aviso «Hay una versión nueva — Actualizar» (showUpdateBanner).
  * @param {()=>void} [opts.onControllerChange] cambió el service worker que controla la página
  * @param {(e:Error)=>void} [opts.onError]
- * @param {()=>Promise|void} [opts.beforeReload] se espera antes de recargar al actualizar (guardar cambios pendientes)
+ * @param {()=>Promise|void} [opts.beforeReload] se espera antes de recargar al actualizar (guardar cambios pendientes); si LANZA un error no se recarga
+ *        (recargar perdería lo que no se pudo guardar) y se llama a opts.onReloadBlocked(error)
+ * @param {(e:Error)=>void} [opts.onReloadBlocked] avisa a la persona de que no se recargó porque no se pudo guardar
  * @param {string} [opts.swUrl] [opts.scope]
  * @param {number} [opts.checkEveryMs=1800000] mínimo entre comprobaciones de actualización al volver a la pestaña
  * @returns {Promise<ServiceWorkerRegistration|null>} null si el navegador no admite service workers o hubo un error

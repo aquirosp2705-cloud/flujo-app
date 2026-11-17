@@ -10,8 +10,10 @@
  *
  * Dónde se guarda
  *   - En este dispositivo: IndexedDB, almacén 'kv' ya existente, claves «_arch:AAAA-MM» (los bytes) y «_arch:index» (el índice
- *     {clave: {etiqueta, creado, bytes, origen, subido, comprimido, sha, resumen, …}}). Todo lo que empieza con «_» queda fuera de los
- *     respaldos (Store.exportAll) y de la restauración (Store.replaceAll).
+ *     {clave: {etiqueta, creado, bytes, origen, subido, comprimido, sha, resumen, reemplazar, baseSha, conflicto, remoteSha, …}}). Todo lo que
+ *     empieza con «_» queda fuera de los respaldos (Store.exportAll) y de la restauración (Store.replaceAll).
+ *     `reemplazar` = la persona confirmó reemplazar el archivo; `baseSha` = sha de la versión de GitHub que ese reemplazo sustituye (null = este
+ *     dispositivo no conoce ninguna). Si al subir GitHub tiene otra distinta (la cambió otro dispositivo) NO se pisa: queda en conflicto.
  *   - En GitHub (repositorio PRIVADO): archivo/AAAA-MM.json.gz (o .json). Lo suben GithubSync.archivePut y lo bajan archiveGet/archiveList.
  *     Si no hay GitHub o no hay red: se guarda aquí, queda «pendiente de subir» y se sube sola después (app.js llama a uploadPending()).
  *   - El archivo NO incluye el token, ni el usuario/repositorio, ni la configuración de sincronización: solo hojas, estilos y catálogo.
@@ -21,14 +23,16 @@
  *       NUNCA lanza. ok:true = ya hay una copia verificada y confirmada en IndexedDB (aunque no haya subido todavía: uploaded:false + warning).
  *       ok:false = no se creó nada (code: NO_ENGINE, NO_STORE, BAD_KEY, EXISTS, QUOTA, VERIFY, ERROR…; error en español): el cierre de mes debe abortar.
  *       Si la clave ya existe y no se pasa replace:true devuelve {ok:false, code:'EXISTS'} sin escribir (antes: has(key) / info(key) para preguntar).
- *       key por omisión: source 'cierre' → keyForClose() (mes de CONSOL L21, ¡léelo ANTES de escribir en CONSOL!); 'manual' → keyForToday().
+ *       key por omisión: source 'cierre' → keyForClose() (mes de CONSOL L21, ¡léelo ANTES de escribir en CONSOL!; si no se puede leer devuelve
+ *       code 'NO_MONTH' y no guarda nada: nunca se adivina con la fecha de hoy); 'manual' → keyForToday().
  *       Tras guardar intenta subir a GitHub con plazo (25 s); upload:false lo omite (queda pendiente y se sube solo).
  *   has(key) → Promise<boolean> · info(key) → Promise<elemento|null> · list({remote, force}) → Promise<[{key, label, createdAt, bytes, where:'github'|'local'|'ambos',
  *       source, resumen?, pending, conflict, uploadError, …}]> (más reciente primero) · listDetailed() → {items, remote:{configured, tried, ok, offline, error}}
- *   open(key) → Promise<{meta, sheetDatas, info}> (listo para new Engine(meta, sheetDatas), p. ej. con createViewerEngine); rechaza con ArchiveError
+ *   open(key, {version:'github'?}) → Promise<{meta, sheetDatas, info}> (listo para new Engine(meta, sheetDatas), p. ej. con createViewerEngine); rechaza con ArchiveError.
+ *       version:'github' baja y muestra la versión de GitHub SIN guardarla aquí (para compararla antes de resolver un conflicto).
  *   uploadPending() · resolveConflict(key, 'local'|'remote') · pendingCount() · unsyncedCount() · count() · keyForToday() · keyForClose()
  *   addEventListener('change', e => e.detail.what: 'saved' | 'uploaded' | 'conflict' | 'error')
- * Pantalla: mount(host, ctx, arg, q) → #/archivo (lista) y #/archivo/AAAA-MM[?hoja=sNN] (visor de solo lectura).
+ * Pantalla: mount(host, ctx, arg, q) → #/archivo (lista) y #/archivo/AAAA-MM[?hoja=sNN][&version=github] (visor de solo lectura).
  *
  * Privacidad: nada del contenido se escribe en la consola; los mensajes de error no llevan datos.
  */
@@ -41,7 +45,9 @@ import { gitBlobSha, isGzipBytes, utf8Encode, utf8Decode, RE_ARCHIVE_KEY } from 
 
 export const ARCHIVE_FORMAT = 'flujoweb-archivo';
 export const ARCHIVE_VERSION = 1;
-const MAX_UNPACKED = 200 * 1024 * 1024;          // tope de seguridad al descomprimir (un archivo real pesa unos pocos MB)
+// Tope al descomprimir un archivo (también se aplica al guardarlo: _snapshot lo vuelve a leer). Un archivo real pesa ~2 MB sin comprimir (11 hojas), así que 32 MB
+// deja un margen de 16 veces; abrirlo en un celular usa varias copias en memoria (bytes, texto y objetos), por eso no es más alto.
+const MAX_UNPACKED = 32 * 1024 * 1024;
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const MONTHS_ABBR = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -127,7 +133,7 @@ async function readStream(stream, limit) {
     const { done, value } = await reader.read();
     if (done) break;
     n += value.length;
-    if (limit && n > limit) { try { await reader.cancel(); } catch (_) { /* nada */ } throw new ArchiveError('CORRUPT', 'El archivo es demasiado grande o está dañado.'); }
+    if (limit && n > limit) { try { await reader.cancel(); } catch (_) { /* nada */ } throw new ArchiveError('CORRUPT', 'El archivo es demasiado grande (más de ' + Math.round(limit / 1048576) + ' MB ya descomprimido) o está dañado.'); }
     chunks.push(value);
   }
   const out = new Uint8Array(n);
@@ -355,12 +361,17 @@ class LocalArchive {
     return null;
   }
 
-  /** Guarda bytes + entrada del índice en UNA transacción. Sin replace, si la clave ya existe no escribe nada. @returns {{exists:boolean, prev:object|null}} */
-  async put(key, bytes, entry, { replace = false } = {}) {
+  /**
+   * Guarda bytes + entrada del índice en UNA transacción. Sin replace, si la clave ya existe no escribe nada.
+   * Con `guard` (el `creado` de la entrada que se creía estar reemplazando): si la entrada actual ya es otra (se guardó una versión nueva mientras tanto) no escribe.
+   * @returns {{exists:boolean, prev:object|null, stale?:boolean}}
+   */
+  async put(key, bytes, entry, { replace = false, guard } = {}) {
     return this._s().tx(['kv'], 'readwrite', async (t) => {
       const idx = { ...((await t.get('kv', ARCHIVE_INDEX_KEY)) || {}) };
       const prev = idx[key] || null;
       if (prev && !replace) return { exists: true, prev };
+      if (guard != null && prev && prev.creado !== guard) return { exists: true, prev, stale: true };
       idx[key] = entry;
       await Promise.all([t.put('kv', ARCHIVE_PREFIX + key, bytes), t.put('kv', ARCHIVE_INDEX_KEY, idx)]);
       return { exists: false, prev };
@@ -432,8 +443,22 @@ export class Archive extends EventTarget {
 
   /** Mes de hoy (AAAA-MM). */
   keyForToday() { return keyFromDate(this._now()); }
-  /** Mes del cierre: el mes en curso de CONSOL (L21); si no se puede leer, el de hoy. */
-  keyForClose() { const e = this._getEngine(); return (e && consolMonthKey(e)) || this.keyForToday(); }
+  /** Mes del cierre: el mes en curso de CONSOL (L21), o null si no se puede leer. NUNCA se adivina con la fecha de hoy: se archivaría con el mes equivocado. */
+  keyForClose() { const e = this._getEngine(); return (e && consolMonthKey(e)) || null; }
+
+  /**
+   * sha de la versión de GitHub que un reemplazo va a sustituir, según lo que ESTE dispositivo sabe (la base del reemplazo): null = no conoce ninguna.
+   * Al subir, si GitHub tiene otra distinta (otro dispositivo la cambió) no se pisa.
+   */
+  _knownRemoteSha(key, before) {
+    if (before) {
+      if (before.conflicto) return null;                                              // hay dos versiones esperando decisión: reemplazar la local no decide nada sobre la de GitHub
+      if (before.reemplazar && before.baseSha !== undefined) return before.baseSha;   // un reemplazo anterior que aún no subió: se conserva su base original
+      if (before.subido && before.sha) return before.sha;                             // sincronizado: GitHub tenía este mismo contenido
+    }
+    const r = this._remoteCache && this._remoteCache.map && this._remoteCache.map.get(key);
+    return (r && r.sha) || null;                                                      // la lista de GitHub que la persona vio al confirmar
+  }
   monthLabel(key) { return monthLabel(key); }
 
   /* ---------------------------------------------------------------- crear */
@@ -462,7 +487,12 @@ export class Archive extends EventTarget {
       if (!engine) return fail('NO_ENGINE', 'Las hojas todavía no están cargadas: espera un momento y vuelve a intentarlo.');
       if (!this._getStore()) return fail('NO_STORE', 'Este dispositivo no permite guardar datos locales, así que no se puede crear el archivo. Abre Flujo en una ventana normal del navegador (no privada).');
       source = source === 'cierre' ? 'cierre' : 'manual';
-      if (key == null || key === '') key = source === 'cierre' ? this.keyForClose() : this.keyForToday();
+      if (key == null || key === '') {
+        if (source === 'cierre') {
+          key = this.keyForClose();
+          if (!key) return fail('NO_MONTH', 'No pude leer el mes en curso de la hoja de resumen (CONSOL, celda L21), así que no guardo el archivo para no ponerle un mes equivocado. Guárdalo a mano desde Hojas → Archivo por mes.');
+        } else key = this.keyForToday();
+      }
       if (!isValidKey(key)) return fail('BAD_KEY', 'El mes del archivo no es válido (debe ser AAAA-MM, por ejemplo 2026-11).');
       label = typeof label === 'string' && label.trim() ? label.trim() : monthLabel(key);
       const prog = (o) => { try { if (onProgress) onProgress(o); } catch (_) { /* nada */ } };
@@ -482,7 +512,7 @@ export class Archive extends EventTarget {
       prog({ phase: 'save', message: 'Guardando en este dispositivo…' });
       const entry = {
         etiqueta: label, creado: arc.creado, bytes: enc.bytes.length, origen: arc.origen, subido: false, comprimido: enc.compressed, sha,
-        resumen: arc.resumen, hojas: arc.hojas.length, reemplazar: !!replace, conflicto: false, ultimoError: null,
+        resumen: arc.resumen, hojas: arc.hojas.length, reemplazar: !!replace, baseSha: replace ? this._knownRemoteSha(key, before) : null, conflicto: false, ultimoError: null,
       };
       const put = await this._local.put(key, enc.bytes, entry, { replace: !!replace });
       if (put.exists) return fail('EXISTS', 'Ya existe un archivo de ' + monthLabel(key) + ' (se creó mientras se preparaba este). Para reemplazarlo hay que confirmarlo.', { exists: true, existing: put.prev });
@@ -530,8 +560,10 @@ export class Archive extends EventTarget {
     const bytes = entry ? await this._local.getBytes(key) : null;
     if (!entry || !bytes) return { status: 'missing' };
     try {
-      const r = await sync.archivePut(key, bytes, { replace: !!entry.reemplazar, signal });
-      await this._local.patch(key, entry.creado, { subido: true, conflicto: false, reemplazar: false, ultimoError: null, sha: r.sha || entry.sha, subidoEn: new Date().toISOString() });
+      const replace = !!entry.reemplazar;
+      // con un reemplazo, baseSha = la versión de GitHub que la persona decidió reemplazar: si ahora hay otra (la cambió otro dispositivo) no se pisa
+      const r = await sync.archivePut(key, bytes, replace && entry.baseSha !== undefined ? { replace, baseSha: entry.baseSha, signal } : { replace, signal });
+      await this._local.patch(key, entry.creado, { subido: true, conflicto: false, reemplazar: false, baseSha: null, ultimoError: null, sha: r.sha || entry.sha, subidoEn: new Date().toISOString() });
       this._remoteCache = null;
       this._emit('uploaded', key);
       return { status: 'uploaded', result: r };
@@ -613,7 +645,8 @@ export class Archive extends EventTarget {
       const e = idx[key];
       if (!e) throw new ArchiveError('NOT_FOUND', 'No hay un archivo de ' + monthLabel(key) + ' en este dispositivo.');
       if (choice === 'local') {
-        await this._local.patch(key, e.creado, { conflicto: false, reemplazar: true, subido: false, ultimoError: null });
+        // la persona decide reemplazar LA VERSIÓN DE GITHUB que se le mostró (e.remoteSha): si GitHub cambió otra vez, no se pisa (si no se conoce, se reemplaza la vigente)
+        await this._local.patch(key, e.creado, { conflicto: false, reemplazar: true, baseSha: e.remoteSha || undefined, subido: false, ultimoError: null });
         const r = await this._uploadOne(key);
         if (r.status === 'uploaded') return { ok: true };
         if (r.status === 'error') throw r.error;
@@ -626,7 +659,8 @@ export class Archive extends EventTarget {
       if (offline()) throw new ArchiveError('OFFLINE', 'Ahora no hay conexión a internet. Inténtalo de nuevo cuando vuelva.');
       const got = await sync.archiveGet(key);
       const arc = await decodeArchive(got.bytes);
-      await this._local.put(key, got.bytes, entryFromArchive(arc, got.bytes, got.sha, { subido: true, subidoEn: new Date().toISOString() }), { replace: true });
+      const put = await this._local.put(key, got.bytes, entryFromArchive(arc, got.bytes, got.sha, { subido: true, subidoEn: new Date().toISOString() }), { replace: true, guard: e.creado });
+      if (put.stale) throw new ArchiveError('EXISTS', 'Mientras tanto se guardó otra versión de ' + monthLabel(key) + ' en este dispositivo. Vuelve a abrir la lista y elige de nuevo.');
       this._remoteCache = null;
       this._emit('saved', key);
       return { ok: true };
@@ -709,7 +743,10 @@ export class Archive extends EventTarget {
       if (r) {
         if (r.sha === e.sha) { if (!e.subido || e.conflicto || e.reemplazar) apply(key, { subido: true, conflicto: false, reemplazar: false, ultimoError: null }); }
         else if (e.subido) refresh.push(key);                                 // GitHub tiene una versión más nueva de algo que ya estaba sincronizado
-        else if (!e.reemplazar && !e.conflicto) apply(key, { conflicto: true, remoteSha: r.sha });
+        else if (!e.conflicto) {
+          if (!e.reemplazar) apply(key, { conflicto: true, remoteSha: r.sha });
+          else if (e.baseSha !== undefined && e.baseSha !== r.sha) apply(key, { conflicto: true, reemplazar: false, remoteSha: r.sha });   // GitHub cambió desde que se decidió reemplazar: no se pisa
+        }
       } else if (complete) {
         if (e.subido || e.conflicto) apply(key, { subido: false, conflicto: false });   // GitHub ya no lo tiene: vuelve a quedar pendiente
       }
@@ -722,7 +759,8 @@ export class Archive extends EventTarget {
         if (got === TIMED_OUT) continue;
         const arc = await decodeArchive(got.bytes);
         const entry = entryFromArchive(arc, got.bytes, got.sha, { subido: true, subidoEn: new Date().toISOString() });
-        await this._local.put(key, got.bytes, entry, { replace: true });
+        const put = await this._local.put(key, got.bytes, entry, { replace: true, guard: idx[key].creado });
+        if (put.stale) continue;                                             // mientras tanto se guardó otra versión aquí: no se pisa
         next[key] = entry;
         this._emit('saved', key);
       } catch (_) { /* se queda con la copia de este dispositivo; se reintenta en la próxima consulta */ }
@@ -738,8 +776,9 @@ export class Archive extends EventTarget {
    *   meta/sheetDatas se pasan a createViewerEngine() (o a new Engine(meta, sheetDatas)).
    * @throws {ArchiveError} con mensaje en español (NOT_FOUND, OFFLINE, CORRUPT, NEWER…)
    */
-  async open(key, { onProgress, signal } = {}) {
+  async open(key, { onProgress, signal, version } = {}) {
     if (!isValidKey(key)) throw new ArchiveError('BAD_KEY', 'El mes del archivo no es válido.');
+    if (version === 'github') return this._openRemote(key, { onProgress, signal });
     const label = monthLabel(key);
     const prog = (m) => { try { if (onProgress) onProgress({ message: m }); } catch (_) { /* nada */ } };
     let bytes = null, entry = null, arc = null, fromRemote = false, remoteSha = null;
@@ -772,6 +811,22 @@ export class Archive extends EventTarget {
     const b = archiveToBundle(arc);
     const where = fromRemote ? 'ambos' : (entry && entry.subido ? 'ambos' : 'local');
     return { ...b, info: { key, label: arc.etiqueta || label, createdAt: arc.creado, source: arc.origen, resumen: arc.resumen || null, bytes: bytes.length, where } };
+  }
+
+  /** Abre la versión que hay en GitHub SIN guardarla en este dispositivo (para compararla antes de resolver un conflicto entre dos versiones del mismo mes). */
+  async _openRemote(key, { onProgress, signal } = {}) {
+    const label = monthLabel(key);
+    const sync = this._getSync();
+    if (!sync || !sync.isConfigured()) throw new ArchiveError('NO_CONFIG', 'GitHub no está configurado en este dispositivo.');
+    if (offline()) throw new ArchiveError('OFFLINE', 'Para ver la versión de GitHub hace falta conexión a internet. Conéctate e inténtalo de nuevo.');
+    try { if (onProgress) onProgress({ message: 'Descargando la versión de GitHub de ' + label + '…' }); } catch (_) { /* nada */ }
+    let got;
+    try { got = await sync.archiveGet(key, { signal }); }
+    catch (e) { throw new ArchiveError((e && e.code) || 'ERROR', errText(e, 'No se pudo descargar el archivo.'), { cause: e }); }
+    const arc = await decodeArchive(got.bytes);
+    if (arc.mes !== key) throw new ArchiveError('CORRUPT', 'El archivo no corresponde a ' + label + '.');
+    const b = archiveToBundle(arc);
+    return { ...b, info: { key, label: arc.etiqueta || label, createdAt: arc.creado, source: arc.origen, resumen: arc.resumen || null, bytes: got.bytes.length, where: 'github', version: 'github' } };
   }
 }
 
@@ -825,18 +880,18 @@ function mountList(wrap, ctx, A) {
 
   const todayKey = A.keyForToday();
   btnToday.textContent = 'Guardar el estado de hoy como archivo de ' + monthLabel(todayKey);
-  const closeKey = A.keyForClose();
-  if (closeKey !== todayKey) {
+  const closeKey = A.keyForClose();                           // null si no se puede leer el mes de la hoja de resumen: entonces no se ofrece
+  if (closeKey && closeKey !== todayKey) {
     btnClose.hidden = false;
     btnClose.textContent = 'Guardarlo como archivo de ' + monthLabel(closeKey) + ' (el mes de la hoja de resumen)';
   }
-  const emptyText = () => 'Todavía no hay cierres guardados. El primero se crea al cerrar ' + (MONTHS[+(closeKey.slice(5)) - 1] || 'noviembre') + '.';
+  const emptyText = () => 'Todavía no hay cierres guardados. El primero se crea al cerrar ' + (MONTHS[+((closeKey || todayKey).slice(5)) - 1] || 'noviembre') + '.';
 
   const chip = (cls, text) => el('span', { class: 'arc-chip ' + cls, text });
   const whereChip = (it, configured) => {
     if (it.conflict) return chip('warn', 'Distinto al de GitHub');
+    if (it.pending && configured) return chip('warn', 'Pendiente de subir');          // antes que «GitHub»: un reemplazo aún sin subir no está en GitHub aunque haya una versión anterior allí
     if (it.where === 'github' || it.where === 'ambos') return chip('ok', '☁ GitHub');
-    if (it.pending && configured) return chip('warn', 'Pendiente de subir');
     return chip('mute', 'Solo en este dispositivo');
   };
 
@@ -851,10 +906,17 @@ function mountList(wrap, ctx, A) {
       refresh({ remote: true, force: true });
     };
     m = ctx.modal(el('div', { class: 'arc-conflict' },
-      el('p', { text: 'Hay dos versiones del archivo de ' + it.label + ': la de este dispositivo (guardada el ' + fmtWhen(it.createdAt) + ') y otra distinta en GitHub, hecha en otro dispositivo. No se sobrescribió ninguna. ¿Cuál quieres conservar?' }),
+      el('p', { text: 'Hay dos versiones del archivo de ' + it.label + ': la de este dispositivo (guardada el ' + fmtWhen(it.createdAt) + ') y otra distinta en GitHub, hecha en otro dispositivo. No se sobrescribió ninguna. Puedes verlas antes de decidir. ¿Cuál quieres conservar?' }),
       choice('Ver la de este dispositivo', '', async () => ctx.navigate('archivo/' + it.key)),
-      choice('Usar la de GitHub (descartar la de este dispositivo)', '', () => run('remote', 'Bajando el archivo de GitHub…')),
-      choice('Subir la de este dispositivo y reemplazar la de GitHub', 'danger', () => run('local', 'Subiendo el archivo a GitHub…'))),
+      choice('Ver la de GitHub', '', async () => ctx.navigate('archivo/' + it.key + '?version=github')),
+      choice('Usar la de GitHub (descartar la de este dispositivo)', 'danger', async () => {
+        const ok = await ctx.confirm('Se descartará la versión de este dispositivo (guardada el ' + fmtWhen(it.createdAt) + ') y te quedarás con la de GitHub. No se puede deshacer. ¿Continuar?', { ok: 'Descartar la de este dispositivo', danger: true, title: 'Usar la de GitHub' });
+        if (ok) await run('remote', 'Bajando el archivo de GitHub…');
+      }),
+      choice('Subir la de este dispositivo y reemplazar la de GitHub', 'danger', async () => {
+        const ok = await ctx.confirm('Se reemplazará la versión que hay en GitHub por la de este dispositivo (guardada el ' + fmtWhen(it.createdAt) + '). La de GitHub ya no se podrá recuperar desde la app. ¿Continuar?', { ok: 'Reemplazar la de GitHub', danger: true, title: 'Reemplazar la de GitHub' });
+        if (ok) await run('local', 'Subiendo el archivo a GitHub…');
+      })),
     { title: 'Dos versiones del mismo mes', sheet: false });
   };
 
@@ -934,7 +996,7 @@ function mountList(wrap, ctx, A) {
   }
 
   btnToday.addEventListener('click', () => doSnapshot(todayKey));
-  btnClose.addEventListener('click', () => doSnapshot(closeKey));
+  btnClose.addEventListener('click', () => { if (closeKey) doSnapshot(closeKey); });
   btnUp.addEventListener('click', async () => {
     const r = await ctx.busy('Subiendo los archivos pendientes…', (setText) => A.uploadPending({ onProgress: (p) => p && p.message && setText(p.message) }));
     if (r.skipped === 'offline') ctx.toast('No hay conexión a internet: se subirán cuando vuelva.', { type: 'warn' });
@@ -981,7 +1043,8 @@ function mountViewer(wrap, ctx, A, key, q) {
     wrap.append(el('div', { class: 'card' }, el('h2', { text: 'Archivo · ' + label }), el('p', { class: 'neg', role: 'alert', text }),
       el('div', { class: 'row' }, el('button', { class: 'btn arc-btn', type: 'button', text: '‹ Archivo', onclick: back }))));
   };
-  A.open(key, { onProgress: (p) => { if (!dead && p && p.message) { const s = loading.querySelector('.arc-loading-t'); if (s) s.textContent = p.message; } } })
+  const remoteView = q.get('version') === 'github';            // viendo la versión de GitHub (sin guardarla aquí) para decidir un conflicto
+  A.open(key, { version: remoteView ? 'github' : undefined, onProgress: (p) => { if (!dead && p && p.message) { const s = loading.querySelector('.arc-loading-t'); if (s) s.textContent = p.message; } } })
     .then((bundle) => { if (dead) return; loading.remove(); build(bundle); })
     .catch((e) => { if (!dead) showError(errText(e, 'No se pudo abrir el archivo.')); });
 
@@ -1006,8 +1069,9 @@ function mountViewer(wrap, ctx, A, key, q) {
     wrap.append(el('div', { class: 'arc-view', role: 'region', 'aria-label': 'Archivo de ' + label + ', solo lectura' },
       el('div', { class: 'arc-bar' }, el('button', { class: 'btn ghost arc-back', type: 'button', text: '‹ Archivo', 'aria-label': 'Volver a la lista de archivos', onclick: back }), select),
       el('div', { class: 'arc-info' },
-        el('span', { class: 'arc-title', text: 'Archivo · ' + label }), el('span', { class: 'arc-ro', text: 'Solo lectura' }),
+        el('span', { class: 'arc-title', text: 'Archivo · ' + label + (remoteView ? ' (GitHub)' : '') }), el('span', { class: 'arc-ro', text: 'Solo lectura' }),
         sub.length ? el('span', { class: 'arc-sub', text: sub.join(' · ') }) : null, btnXlsx),
+      remoteView ? el('div', { class: 'arc-banner', role: 'note', text: 'Estás viendo la versión que hay en GitHub; no se guardó en este dispositivo. Vuelve a «Archivo» para elegir cuál conservar.' }) : null,
       status, gwrap));
 
     grid = new SheetGrid(gwrap, eng, { readOnly: true, onChange() { }, onFind: null, onToast: (m) => ctx.toast(m) });
@@ -1028,7 +1092,7 @@ function mountViewer(wrap, ctx, A, key, q) {
       if (dead || my !== token || !grid) return;
       grid.open(sh.id, { end: !!(cat[sh.name] && cat[sh.name].end) });
       select.value = sh.id;
-      if (!first) { try { history.replaceState(null, '', '#/archivo/' + key + '?hoja=' + sh.id); } catch (_) { /* nada */ } }
+      if (!first) { try { history.replaceState(null, '', '#/archivo/' + key + '?hoja=' + sh.id + (remoteView ? '&version=github' : '')); } catch (_) { /* nada */ } }
     }
     const openSafe = (sid, first) => openSheet(sid, first).catch((e) => { if (!dead) { status.hidden = true; ctx.toast('No se pudo abrir la hoja: ' + errText(e), { type: 'error', ms: 8000 }); } });
     select.addEventListener('change', () => openSafe(select.value, false));

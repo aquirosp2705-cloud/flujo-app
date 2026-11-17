@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '16';
+const VERSION = '17';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -75,16 +75,58 @@ function takePairingFromUrl(hash) {
 /** Entrega (una sola vez) el código que llegó por enlace. */
 function takePendingPairing() { const c = state.pairingCode || null; state.pairingCode = null; return c; }
 
+/**
+ * Una sola ventana de Flujo a la vez. Dos ventanas con los datos cargados en memoria en momentos distintos se pisarían al guardar: la que lleva más tiempo
+ * abierta escribiría sus hojas viejas encima de lo que guardó la otra (por ejemplo, desharía un cierre de mes sin avisar). Se usan Web Locks (Chrome, Edge,
+ * Firefox, Safari 15.4+): quien llega después ESPERA el bloqueo, sin límite (al recargar, la página vieja lo suelta un instante después de que la nueva lo
+ * pide); si pasan unos segundos sin conseguirlo muestra el aviso «ya está abierto en otra ventana» y arranca sola en cuanto la otra se cierra.
+ * Sin Web Locks no se puede vigilar y se sigue como antes; «?multi» (pruebas) lo desactiva.
+ */
+const WINDOW_LOCK = 'flujoweb-ventana:' + new URL('./', location.href).pathname;
+function showAnotherWindowScreen() {
+  document.title = 'Flujo — ya está abierto';
+  setBoot('Flujo ya está abierto en otra ventana o pestaña.', 0);
+  const bar = $('.bar', $('#boot')); if (bar) bar.hidden = true;
+  const extra = $('#boot-extra'); if (!extra) return;
+  extra.innerHTML = '';
+  extra.append(el('p', { class: 'muted small', style: { textAlign: 'left', marginTop: '14px' }, text: 'Solo puede haber una a la vez, para no pisar tus datos: la que se abrió antes guardaría lo suyo encima de los cambios de esta (por ejemplo, desharía un cierre de mes). Cierra la otra (en su menú: Ajustes → «Cerrar Flujo»); esta se abrirá sola en cuanto la cierres.' }));
+}
+function hideAnotherWindowScreen() {
+  document.title = 'Flujo';
+  const extra = $('#boot-extra'); if (extra) extra.innerHTML = '';
+  const bar = $('.bar', $('#boot')); if (bar) bar.hidden = false;
+  setBoot('Cargando módulos…', 5);
+}
+function claimSingleWindow() {
+  if (!navigator.locks || typeof navigator.locks.request !== 'function' || new URLSearchParams(location.search).has('multi')) return Promise.resolve();
+  return new Promise((resolve) => {
+    let granted = false, shown = false, timer = 0;
+    const go = () => { if (granted) return; granted = true; clearTimeout(timer); if (shown) hideAnotherWindowScreen(); resolve(); };
+    timer = setTimeout(() => { if (!granted) { shown = true; showAnotherWindowScreen(); } }, 3500);
+    try {
+      // se concede enseguida si no hay otra ventana, o cuando la otra se cierra; se mantiene mientras esta página siga abierta (el callback nunca termina)
+      navigator.locks.request(WINDOW_LOCK, () => { go(); return new Promise(() => { }); }).catch(() => go());      // un error inesperado: se sigue sin vigilancia
+    } catch (e) { go(); }
+  });
+}
+
 async function boot() {
   applyTheme();
   setBoot('Cargando módulos…', 5);
+  await claimSingleWindow();
   const names = ['store', 'sync-github', 'settings-ui', 'pairing', 'recover', 'ledger', 'dashboard', 'quick', 'archive', 'export', 'pwa'];
   const mods = await Promise.all(names.map((n) => optional('./' + n + '.js')));
   names.forEach((n, i) => { state.mods[n] = mods[i]; });
   takePairingFromUrl(earlyConnectHash);      // el código que traía la URL al abrir (ya quitado de la barra de direcciones)
   if (state.mods.pwa && state.mods.pwa.initPwa) {
     // avisos de «Instalar la app» y «Hay una versión nueva — Actualizar»; antes de recargar se guardan los cambios pendientes
-    try { state.mods.pwa.initPwa({ offlineNotice: false, beforeReload: async () => { if (state.saver) await state.saver.flush(); } }); } catch (e) { console.warn(e); }
+    try {
+      state.mods.pwa.initPwa({
+        offlineNotice: false,
+        beforeReload: async () => { if (state.saver) { await state.saver.flush(); if (state.saver.hasUnsaved) throw new Error('No se pudieron guardar los cambios'); } },
+        onReloadBlocked: () => toast('No se pudieron guardar tus cambios en este dispositivo, así que no se actualizó la app todavía (no se pierde nada). Inténtalo de nuevo o descarga un respaldo en Ajustes.', { type: 'error', ms: 12000 }),
+      });
+    } catch (e) { console.warn(e); }
   }
   let bundle = null;
   if (state.mods.store) {
@@ -256,10 +298,13 @@ function showClosedScreen(note) {
 async function closeProgram() {
   if (state.closing || state.closed) return;
   state.closing = true;
-  let note = '';
+  let note = '', unsaved = false;
   try {
     await ui.busy('Guardando tus cambios antes de cerrar…', async () => {
       try { if (state.saver) await state.saver.flush(); } catch (e) { console.warn('[cerrar] guardado local', e); }
+      // si lo editado no quedó guardado en este dispositivo (cuota llena, almacenamiento bloqueado…), cerrar lo perdería: no se cierra
+      unsaved = !!(state.saver && state.saver.hasUnsaved) || !!(state.engine && state.engine.dirty && state.engine.dirty.size > 0);
+      if (unsaved) return;
       if (syncOn() && state.online) {
         try { await withTimeout(state.sync.pushDirty({}), 12000); } catch (e) { console.warn('[cerrar] subida', e && e.message); }
         try { if (state.archive) await withTimeout(state.archive.uploadPending({}), 6000); } catch (e) { /* se sube la próxima vez */ }
@@ -269,6 +314,11 @@ async function closeProgram() {
       }
     });
   } catch (e) { console.warn('[cerrar]', e); }
+  if (unsaved) {
+    state.closing = false;
+    toast('No se pudieron guardar tus cambios en este dispositivo, así que NO se cerró Flujo. Inténtalo de nuevo; si sigue igual, descarga un respaldo en Ajustes antes de cerrar.', { type: 'error', ms: 14000 });
+    return;
+  }
   state.closed = true;           // los temporizadores y los avisos de segundo plano dejan de actuar
   state.closing = false;
   try { window.close(); } catch (e) { /* el navegador no lo permite */ }
@@ -366,7 +416,10 @@ async function updatePill() {
     else if (!syncOn()) { cls = 'warn'; t = 'Solo este equipo'; }
     else if (st && st.pendingCount > 0) { cls = 'warn'; t = st.pendingCount + ' por subir'; }
     else if (st && st.lastError) { cls = 'warn'; t = 'Sin sincronizar'; }
-    else t = 'Sincronizado';
+    else {
+      let na = 0; try { na = state.archive ? await state.archive.unsyncedCount() : 0; } catch (e) { /* sin dato */ }      // un archivo mensual sin subir (o en conflicto) tampoco está «sincronizado»
+      if (na > 0) { cls = 'warn'; t = na === 1 ? '1 archivo por subir' : na + ' archivos por subir'; } else t = 'Sincronizado';
+    }
   }
   pill.className = 'pill ' + cls; txt.textContent = t;
 }
@@ -643,7 +696,7 @@ function screenAjustes(host) {
 
   // exportar
   const expCard = el('div', { class: 'card' }, el('h2', { text: 'Exportar y respaldo' }),
-    el('p', { class: 'small muted', text: 'Tu información es tuya: descárgala cuando quieras como libro de Excel o como respaldo completo de Flujo.' }));
+    el('p', { class: 'small muted', text: 'Tu información es tuya: descárgala cuando quieras como libro de Excel o como respaldo de Flujo con todas las hojas. Los archivos mensuales no van dentro del respaldo: ya se guardan aparte, en tu GitHub.' }));
   const row = el('div', { class: 'row' });
   if (X) {
     row.append(
@@ -677,9 +730,19 @@ function screenAjustes(host) {
     el('p', { class: 'small muted', text: 'Hojas: ' + eng.sheets.length + ' · motor listo en ' + ((state.buildMs || 0) / 1000).toFixed(1) + ' s · versión ' + VERSION }));
   if (state.store) dev.append(el('div', { class: 'row' },
     el('button', { class: 'btn danger', text: 'Borrar datos de este dispositivo', onclick: async () => {
-      let extra = '';                                                       // los archivos mensuales que aún no llegaron a GitHub se perderían con el borrado
-      try { const n = state.archive ? await state.archive.unsyncedCount() : 0; if (n > 0) extra = ' Ojo: ' + (n === 1 ? 'hay 1 archivo mensual guardado' : 'hay ' + n + ' archivos mensuales guardados') + ' solo en este dispositivo (aún sin subir a GitHub) y también se borraría.'; } catch (e) { /* sin aviso extra */ }
-      if (await ui.confirmDialog('Se borrarán los datos guardados en este dispositivo (no los de GitHub).' + extra + ' ¿Continuar?', { ok: 'Borrar', danger: true })) { await state.store.clearAll(); location.reload(); }
+      // lo que todavía no llegó a GitHub (hojas con cambios, archivos mensuales o cambios sin guardar) se perdería con el borrado
+      const lost = [];
+      try {
+        if (syncOn()) {
+          const st = await state.sync.status(), n = (st && st.pendingCount) || 0;
+          if (n > 0) lost.push(n === 1 ? '1 hoja con cambios que aún no se subió a GitHub (por ejemplo, un cierre de mes hecho sin conexión)' : n + ' hojas con cambios que aún no se subieron a GitHub (por ejemplo, un cierre de mes hecho sin conexión)');
+        }
+      } catch (e) { /* sin aviso de hojas */ }
+      try { const n = state.archive ? await state.archive.unsyncedCount() : 0; if (n > 0) lost.push(n === 1 ? '1 archivo mensual guardado solo en este dispositivo (aún sin subir a GitHub)' : n + ' archivos mensuales guardados solo en este dispositivo (aún sin subir a GitHub)'); } catch (e) { /* sin aviso de archivos */ }
+      if ((state.saver && state.saver.hasUnsaved) || (state.engine && state.engine.dirty && state.engine.dirty.size > 0)) lost.push('cambios que ni siquiera se alcanzaron a guardar en este dispositivo');
+      let extra = lost.length ? ' Ojo: hay ' + lost.join('; hay ') + '. Todo eso se perdería: espera a que termine de subirse (toca el indicador de sincronización de arriba) o descarga un respaldo antes.' : '';
+      if (!syncOn()) extra += ' GitHub no está conectado en este dispositivo, así que esta es la única copia de tus datos: descarga un respaldo antes.';
+      if (await ui.confirmDialog('Se borrarán los datos guardados en este dispositivo (no los que ya estén en GitHub).' + extra + ' ¿Continuar?', { ok: 'Borrar', danger: true })) { await state.store.clearAll(); location.reload(); }
     } })));
   wrap.append(dev);
 

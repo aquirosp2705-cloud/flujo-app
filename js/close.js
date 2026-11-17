@@ -230,7 +230,7 @@ function makeVars(C) {
   const L21 = C.val('L21');
   if (!isDateSerial(L21)) return null;
   const d = ymd(L21);
-  const V = { L21, Y: d.y, m: d.m, Y1: d.y + 1, isDec: d.m === 12, dayOne: d.d === 1 };
+  const V = { L21, Y: d.y, m: d.m, Y1: d.y + 1, isDec: d.m === 12, dayOne: d.d === 1 && Number.isInteger(L21) };     // una fecha con hora (46357.5) tampoco es «día 1»
   V.col = MONTH_COLS[d.m - 1];
   V.prev = d.m === 1 ? BASE_COL : MONTH_COLS[d.m - 2];
   V.next = d.m <= 11 ? MONTH_COLS[d.m] : '';
@@ -342,6 +342,8 @@ const ymIndex = (s) => { const d = ymd(s); return d.y * 12 + d.m - 1; };
 
 const PRE = [
   { id: 'PRE03', run: (C, V) => {
+    // diciembre abre el año nuevo y exige que L21 sea EXACTAMENTE el día 1 (la comprobación POF11 lo pide); en los demás meses solo se avisa y se corrige al cerrar (AVI05)
+    if (V.isDec && !V.dayOne) return `La fecha del mes en curso de CONSOL (L21) no es exactamente el 1 de diciembre (figura como ${dayMonthText(V.L21)}${Number.isInteger(V.L21) ? '' : ' con hora'}). Para cerrar diciembre y abrir el año nuevo, déjala en el 1 de diciembre y vuelve a intentarlo.`;
     const h = C.val(V.col + '28');
     if (!isDateSerial(h)) return `En el patrimonio mensual de CONSOL falta la fecha de ${V.monthLabel} (celda ${V.col}28). Escríbela (día 1 del mes) y vuelve a intentarlo.`;
     if (ymIndex(h) !== ymIndex(V.L21)) return `El patrimonio mensual de CONSOL tiene ${shortLabel(h)} en la columna del mes en curso (${V.col}28), pero el mes en curso es ${shortLabel(V.L21)}. Revisa que las fechas de la hoja estén bien antes de cerrar.`;
@@ -590,7 +592,8 @@ const PHASES = {
     B.op('F28', 'texto', `Rótulo del acumulado de ${Y1}`, [{ a1: 'Q35', raw: 'acumulado ' + Y1 }], 'F');
     B.op('F29', 'fecha', 'Diciembre base de la tabla de patrimonio', [{ a1: 'O21', raw: V.decY, asDate: true }], 'F');
     B.op('F30', 'copiar_rango_valores', 'Diciembre base: bancos, gastos e inversiones = cierre de diciembre', copyVals('AD29:AD31', 'O22:O24'), 'F');
-    B.op('F31', 'copiar_rango_crudo', 'Comparativo anual: la columna T pasa a la U', cellsOf('U21:U24').map((a, i) => ({ a1: a, raw: C.raw(cellsOf('T21:T24')[i]) })), 'F');
+    // U21 era un rótulo de texto («dic-23») con formato de número: al recibir la fecha de T21 debe tomar también el formato de fecha de T21 (si no se vería «45,627»)
+    B.op('F31', 'copiar_rango_crudo', 'Comparativo anual: la columna T pasa a la U', [...cellsOf('U21:U24').map((a, i) => ({ a1: a, raw: C.raw(cellsOf('T21:T24')[i]) })), { a1: 'U21', style: C.sty('T21'), from: 'T21' }], 'F');
     B.op('F32', 'copiar_rango_crudo', 'Comparativo anual: la columna S pasa a la T', cellsOf('T21:T24').map((a, i) => ({ a1: a, raw: C.raw(cellsOf('S21:S24')[i]) })), 'F');
     B.op('F33', 'fecha', 'Comparativo anual: nueva columna = diciembre que se cierra', [{ a1: 'S21', raw: V.decY, asDate: true }], 'F');
     B.op('F34', 'copiar_rango_valores', 'Comparativo anual: cifras del diciembre que se cierra', copyVals('AD29:AD31', 'S22:S24'), 'F');
@@ -879,7 +882,10 @@ function makeChecks(C, V, plan, pre) {
   add('POF01', 'Archivo: los 13 totales archivados = los totales del bloque vivo antes de reiniciarlo', () => { for (const c of baseCols) if (!near(C.val(c + V.T), K.pv(c + '32'))) return `${c}${V.T}=${fx(C.val(c + V.T))} ≠ ${c}32 previo ${fx(K.pv(c + '32'))}`; return null; }, true);
   add('POF02', 'Archivo: fechas y las tres partes de los 13 meses = las del bloque vivo antes de reiniciarlo', () => {
     for (const c of baseCols) {
-      for (let k = 0; k < 3; k++) if (!near(C.val(c + (V.d1 + k)), K.pv(c + (29 + k)))) return `${c}${V.d1 + k} ≠ ${c}${29 + k} previo`;
+      for (let k = 0; k < 3; k++) {
+        const a = C.val(c + (V.d1 + k)), b = K.pv(c + (29 + k));
+        if (!(near(a, b) || (blank(a) && blank(b)))) return `${c}${V.d1 + k} ≠ ${c}${29 + k} previo`;          // una celda vacía del año (p. ej. un mes sin inversiones) queda vacía en el archivo: es igual
+      }
       if (C.val(c + V.d) !== K.pv(c + '28')) return `fecha ${c}${V.d} ≠ ${c}28 previo`;
     }
     return null;

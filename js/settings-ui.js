@@ -266,7 +266,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
 
     h('div', { class: 'fx-card' },
       h('h3', { class: 'fx-h3' }, 'Respaldo local'),
-      h('p', { class: 'fx-note' }, 'Un archivo .json con todo el libro (no incluye el token). Restaurarlo reemplaza los datos de este dispositivo.'),
+      h('p', { class: 'fx-note' }, 'Un archivo .json con todas las hojas del libro (no incluye el token ni los archivos mensuales: esos se guardan aparte, en tu GitHub). Restaurarlo reemplaza las hojas de este dispositivo; los archivos mensuales no se tocan.'),
       h('div', { class: 'fx-actions' }, backupBtn, restoreBtn, fileIn)));
 
   containerEl.append(root);
@@ -495,7 +495,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 15000);
-    say('ok', 'Respaldo generado (' + fmtBytes(blob.size) + '). Guárdalo en un lugar seguro: contiene todos tus datos.');
+    say('ok', 'Respaldo generado (' + fmtBytes(blob.size) + '). Guárdalo en un lugar seguro: contiene todas tus hojas (no incluye los archivos mensuales).');
   }
 
   async function doRestore(file) {
@@ -503,8 +503,8 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     try { parsed = Store.parseBackup(await file.text()); }
     catch (e) { say('error', explain(e)); return; }
     const n = parsed.meta.sheets.length;
-    if (!window.confirm('Se REEMPLAZARÁN todos los datos de este dispositivo por los del respaldo «' + file.name + '» (' + n + ' hojas).\n\n' +
-      'Los cambios no guardados en pantalla se perderán. ¿Continuar?')) return;
+    if (!window.confirm('Se REEMPLAZARÁN todas las hojas de este dispositivo por las del respaldo «' + file.name + '» (' + n + ' hojas).\n\n' +
+      'Los cambios no guardados en pantalla se perderán. Los archivos mensuales de este dispositivo no se tocan. ¿Continuar?')) return;
     if (engine && engine.dirty && typeof engine.dirty.clear === 'function') engine.dirty.clear();   // lo que hay en memoria se descarta a propósito
     await store.replaceAll(parsed);
     let pending = null;

@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '1.0.0';
+const VERSION = '13';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -78,7 +78,7 @@ function takePendingPairing() { const c = state.pairingCode || null; state.pairi
 async function boot() {
   applyTheme();
   setBoot('Cargando módulos…', 5);
-  const names = ['store', 'sync-github', 'settings-ui', 'pairing', 'ledger', 'dashboard', 'quick', 'archive', 'export', 'pwa'];
+  const names = ['store', 'sync-github', 'settings-ui', 'pairing', 'recover', 'ledger', 'dashboard', 'quick', 'archive', 'export', 'pwa'];
   const mods = await Promise.all(names.map((n) => optional('./' + n + '.js')));
   names.forEach((n, i) => { state.mods[n] = mods[i]; });
   takePairingFromUrl(earlyConnectHash);      // el código que traía la URL al abrir (ya quitado de la barra de direcciones)
@@ -146,13 +146,14 @@ function showOnboarding(resolve) {
     try { if (joinUi) joinUi.destroy(); } catch (e) { /* ya no se ve: solo se suelta lo escrito */ }
     extra.innerHTML = ''; $('.bar', $('#boot')).hidden = false; resolve(bundle);
   };
-  const S = state.mods['sync-github'], U = state.mods['settings-ui'];
+  const S = state.mods['sync-github'], U = state.mods['settings-ui'], R = state.mods.recover;
   const canSync = !!(S && U && state.store);
   const P = state.mods.pwa, iosHelp = !!(P && P.needsIosInstallHelp && P.needsIosInstallHelp());
   const gh = el('div', { class: 'card', style: { textAlign: 'left', marginTop: '14px' } });
   const joinHost = el('div', { style: { textAlign: 'left', marginTop: '14px' } });     // «Ya tengo un código de conexión»: la opción principal
   extra.append(...[
     iosHelp ? el('div', { class: 'banner', style: { textAlign: 'left', marginTop: '14px' }, text: 'En iPhone: primero toca Compartir y «Añadir a pantalla de inicio», abre Flujo desde su ícono y recién ahí conecta con el código. Si conectas aquí y luego la instalas, la app instalada empezará vacía.' }) : null,
+    el('p', { class: 'muted small', style: { textAlign: 'left', margin: '14px 0 0' }, text: 'Si ya usabas Flujo en este navegador y ves esta pantalla, es posible que el navegador haya borrado los datos de la app. Tus datos siguen a salvo en GitHub: conecta tu cuenta y se recuperan.' }),
     canSync ? joinHost : null,
     canSync ? el('p', { class: 'muted small', style: { margin: '18px 0 0' }, text: '¿No tienes un código? Hay otras formas de traer tus datos (con más pasos):' }) : null,
     el('div', { class: 'row', style: { justifyContent: 'center', marginTop: canSync ? '10px' : '12px' } },
@@ -171,12 +172,25 @@ function showOnboarding(resolve) {
       })()),
     gh].filter(Boolean));
   gh.hidden = true;
+  if (R && typeof R.storageReport === 'function') {      // detalles técnicos para entender qué pasó si los datos desaparecieron
+    const diag = el('details', { class: 'muted small', style: { textAlign: 'left', marginTop: '14px' } }, el('summary', { text: 'Detalles técnicos (para saber qué pasó)' }));
+    const box = el('div', {}); diag.append(box); extra.append(diag);
+    R.storageReport().then((rep) => { box.replaceChildren(...R.describeReport(rep).map((t) => el('p', { style: { margin: '4px 0' }, text: t }))); }).catch(() => { /* sin detalles */ });
+  }
   if (canSync) {
     if (!state.sync) state.sync = new S.GithubSync(state.store, {});
     applyUrlConfig();
     const common = { store: state.store, sync: state.sync, onBundleReplaced: (b) => finish(b) };
     if (typeof U.mountPairingJoin === 'function') joinUi = U.mountPairingJoin(joinHost, { ...common, code: takePendingPairing() });
-    U.mountSyncSettings(gh, { ...common, engine: null, pairing: false });
+    const ghUi = U.mountSyncSettings(gh, { ...common, engine: null, pairing: false });
+    if (R && typeof R.findToken === 'function') {      // si el navegador guardó la conexión en su administrador de contraseñas: reconecta y trae los datos sin pedir nada
+      R.findToken({ silent: true }).then((c) => {
+        if (!c || !ghUi || typeof ghUi.useCredential !== 'function' || !$('#boot')) return undefined;
+        gh.hidden = false;
+        $('#boot-msg').textContent = 'Encontré tu conexión guardada en el navegador: trayendo tus datos…';
+        return ghUi.useCredential(c);
+      }).catch(() => { /* sin conexión guardada: la persona sigue con las opciones de la pantalla */ });
+    }
   } else gh.append(el('p', { class: 'muted', text: 'La sincronización con GitHub no está disponible en esta versión.' }));
 }
 
@@ -202,6 +216,7 @@ async function startWithBundle(bundle) {
   }
   $('#boot').remove(); $('#app').hidden = false;
   $('#side-ver').textContent = 'Versión ' + VERSION;
+  const btnClose = $('#btnClose'); if (btnClose) btnClose.addEventListener('click', closeProgram);
   // llegó un enlace de conexión a un dispositivo que ya tiene datos: se abre Ajustes (donde está el bloque de pegar el código)
   if (state.pairingCode) { try { history.replaceState(null, '', location.pathname + location.search + '#/ajustes'); } catch (e) { /* */ } }
   window.addEventListener('hashchange', onHashChange);
@@ -218,6 +233,46 @@ async function startWithBundle(bundle) {
   updatePill();
   if (state.startConflicts && state.startConflicts.length) toast('Hay ' + state.startConflicts.length + ' hoja(s) en conflicto con GitHub: revisa Ajustes → Sincronización.', { type: 'warn', ms: 9000 });
   if (syncOn()) { autoPush(); autoArchive(); }
+}
+
+/* ------------------------------------------------------------------ cerrar el programa */
+const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('tiempo agotado')), ms))]);
+
+/** Pantalla final cuando el navegador no deja que la app cierre su propia pestaña: nada queda corriendo y se explica cómo cerrarla. */
+function showClosedScreen(note) {
+  document.title = 'Flujo — cerrado';
+  document.body.replaceChildren(el('main', { class: 'closed', role: 'status' },
+    el('h1', { text: 'Flujo está cerrado' }),
+    el('p', { text: 'Tus cambios quedaron guardados.' + (note ? ' ' + note : '') }),
+    el('p', { class: 'muted', text: 'Ya puedes cerrar esta pestaña o ventana (Ctrl+W).' }),
+    el('button', { class: 'btn primary', type: 'button', text: 'Volver a abrir Flujo', onclick: () => location.reload() })));
+}
+
+/**
+ * «Cerrar Flujo»: guarda lo pendiente (en este dispositivo y, si hay conexión, en GitHub), deja de trabajar en segundo plano y cierra la ventana.
+ * Una ventana de la app instalada se cierra sola; una pestaña normal no puede cerrarla la página (lo impide el navegador): en ese caso queda
+ * la pantalla «Flujo está cerrado», sin nada corriendo.
+ */
+async function closeProgram() {
+  if (state.closing || state.closed) return;
+  state.closing = true;
+  let note = '';
+  try {
+    await ui.busy('Guardando tus cambios antes de cerrar…', async () => {
+      try { if (state.saver) await state.saver.flush(); } catch (e) { console.warn('[cerrar] guardado local', e); }
+      if (syncOn() && state.online) {
+        try { await withTimeout(state.sync.pushDirty({}), 12000); } catch (e) { console.warn('[cerrar] subida', e && e.message); }
+        try { if (state.archive) await withTimeout(state.archive.uploadPending({}), 6000); } catch (e) { /* se sube la próxima vez */ }
+      }
+      if (syncOn()) {
+        try { const st = await state.sync.status(); if (st && st.pendingCount) note = 'Quedan ' + st.pendingCount + (st.pendingCount === 1 ? ' hoja' : ' hojas') + ' por subir a GitHub: se subirán la próxima vez que abras Flujo.'; } catch (e) { /* sin dato */ }
+      }
+    });
+  } catch (e) { console.warn('[cerrar]', e); }
+  state.closed = true;           // los temporizadores y los avisos de segundo plano dejan de actuar
+  state.closing = false;
+  try { window.close(); } catch (e) { /* el navegador no lo permite */ }
+  setTimeout(() => { if (!window.closed) showClosedScreen(note); }, 450);
 }
 
 /* ------------------------------------------------------------------ guardado y sincronización */
@@ -241,7 +296,7 @@ function afterSaved() {
   pushTimer = setTimeout(() => autoPush(), 4000);                   // se sube unos segundos después del último cambio
 }
 async function autoPush() {
-  if (!syncOn() || !state.online || state.pushing) return;
+  if (state.closed || !syncOn() || !state.online || state.pushing) return;
   state.pushing = true; updatePill();
   try {
     if (state.saver) await state.saver.flush();
@@ -253,7 +308,7 @@ async function autoPush() {
 /** Mientras la app está abierta: baja lo que otro dispositivo haya guardado. Si llegó algo nuevo hay que recargar (si no, se pisaría con datos viejos). */
 let checking = false;
 async function checkRemote() {
-  if (!syncOn() || !state.online || checking || state.pushing) return;
+  if (state.closed || !syncOn() || !state.online || checking || state.pushing) return;
   checking = true;
   try {
     if (state.saver) await state.saver.flush();                      // primero lo mío al almacenamiento local, para que el conflicto se detecte bien
@@ -278,7 +333,7 @@ function showReloadModal() {
 /** Archivos mensuales guardados aquí y aún sin subir (sin red o sin GitHub al crearlos): se suben solos cuando se puede. Sin nada pendiente no usa la red. */
 async function autoArchive() {
   const A = state.archive;
-  if (!A || !syncOn() || !state.online || state.archiving) return;
+  if (state.closed || !A || !syncOn() || !state.online || state.archiving) return;
   state.archiving = true;
   try {
     const r = await A.uploadPending({});
@@ -337,7 +392,7 @@ function onHashChange() {
 }
 let routeToken = 0;
 async function route() {
-  if (!state.engine) return;
+  if (!state.engine || state.closed) return;
   const parsed = parseHash();
   const { arg, q } = parsed;
   const name = ({ registrar: 'reg', movimientos: 'mov' })[parsed.name] || parsed.name;     // los módulos navegan con estos nombres largos
@@ -617,6 +672,8 @@ function screenAjustes(host) {
 
   // datos de este equipo
   const dev = el('div', { class: 'card' }, el('h2', { text: 'Este dispositivo' }),
+    el('div', { class: 'row' }, el('button', { class: 'btn', type: 'button', text: 'Cerrar Flujo', title: 'Guarda lo pendiente y cierra la ventana', onclick: closeProgram }),
+      el('span', { class: 'small muted', text: 'Guarda lo pendiente y cierra la app para que no quede nada abierto.' })),
     el('p', { class: 'small muted', text: 'Hojas: ' + eng.sheets.length + ' · motor listo en ' + ((state.buildMs || 0) / 1000).toFixed(1) + ' s · versión ' + VERSION }));
   if (state.store) dev.append(el('div', { class: 'row' },
     el('button', { class: 'btn danger', text: 'Borrar datos de este dispositivo', onclick: async () => {

@@ -26,6 +26,12 @@ En el Resumen, **«Cerrar mes»** hace lo que hacías a mano en CONSOL: guarda e
 
 Antes de escribir nada muestra una **vista previa** en lenguaje sencillo, con avisos y la lista celda por celda (antes → después). Es una sola operación: si algo no cuadra no se cambia nada, y después puedes usar **«Deshacer»** (también desde el Resumen, aunque hayas cerrado la app). Se puede cerrar cualquier día del mes; si todavía no termina, la vista previa lo avisa y pide confirmar.
 
+### Si el navegador borra los datos de la app
+
+Tus datos siguen en GitHub. Al conectar, la app ofrece guardar el token en el administrador de contraseñas del navegador; si después los datos desaparecen, al abrir la app se reconecta sola (o con el botón «Usar el token guardado en el navegador») y baja todo de GitHub. Conectar por primera vez ya trae los datos en un solo paso.
+
+**Cerrar Flujo** (menú lateral y Ajustes → Este dispositivo) guarda y sube lo pendiente y cierra la ventana. La app se abre en una sola ventana.
+
 En una hoja: toca una celda para seleccionarla, vuelve a tocar (o doble clic / F2) para editar. `Ctrl+Z` deshace, `Ctrl+D` rellena hacia abajo,
 el cuadrito azul de la esquina de la selección arrastra fórmulas, y la barra inferior muestra suma y promedio de lo seleccionado.
 
@@ -82,6 +88,7 @@ esa copia es la que se sube al repositorio privado. Al abrir la app, cada dispos
 * `js/ledger.js`, `js/dashboard.js`, `js/quick.js` — movimientos bancarios, resumen y capturas rápidas.
 * `js/invest.js` — tarjeta «Inversiones» del Resumen: lee las pólizas de la hoja de pólizas y suma el total invertido y el total por banco (con los ahorros a plazo aparte y la explicación de por qué el patrimonio cuenta menos).
 * `js/close.js` — cierre de mes completo de CONSOL (sin interfaz): `planClose` (calcula y valida sin escribir), `applyClose` (escribe en una sola tanda y verifica; si algo falla restaura todo) y `undoClose`; descubre los bloques anuales y los resúmenes por su estructura, así que sirve también para 2027 en adelante. Pruebas: `test/close-test.html`.
+* `js/recover.js` — guarda y recupera el token con el administrador de contraseñas del navegador (Credential Management API) y arma el diagnóstico de almacenamiento. Pruebas: `test/recover-test.html`.
 * `js/archive.js` — archivo mensual: congela las hojas como valores, las comprime (gzip), las guarda en IndexedDB y las sube a `archivo/` del repositorio privado; trae la pantalla de lista y el visor de solo lectura (`css/archive.css`). Pruebas: `test/archive-test.html`.
 * `js/export.js` — exportación a `.xlsx` y respaldo `.json`. `js/pwa.js` + `sw.js` — instalación y modo sin conexión.
 * `test/` — páginas de prueba que se abren en el navegador (`test/verify.html` compara el motor con los valores calculados por Excel: 28 901 de 28 908 fórmulas iguales, 99,98 %).

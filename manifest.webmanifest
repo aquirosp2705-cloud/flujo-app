@@ -6,6 +6,12 @@
   "dir": "ltr",
   "start_url": "./index.html",
   "scope": "./",
+  "launch_handler": {
+    "client_mode": [
+      "focus-existing",
+      "auto"
+    ]
+  },
   "display": "standalone",
   "orientation": "any",
   "theme_color": "#0f5257",

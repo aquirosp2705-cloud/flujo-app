@@ -26,6 +26,10 @@ import { AutoSaver, StoreError, Store, KV } from './store.js';
 import { GithubError, GithubSync } from './sync-github.js';
 import { PairingError, newKey, formatKey, createCode, openCode, linkFor } from './pairing.js';
 
+/** recover.js (token guardado en el administrador de contraseñas del navegador) se carga solo cuando hace falta; si falla, la conexión con GitHub sigue igual. */
+let recoverPromise = null;
+const loadRecover = () => (recoverPromise || (recoverPromise = import('./recover.js').catch(() => null)));
+
 function h(tag, props, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props || {})) {
@@ -75,6 +79,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
   let destroyed = false;
   let metaNames = new Map();
   let timer = null;
+  let lastTyped = null;          // última conexión tecleada (usuario, repositorio, token); vive en memoria hasta probarla
 
   /* ------------------------------------------------------------ construcción del DOM */
   const cfg0 = sync.getConfig();
@@ -102,6 +107,10 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
   };
 
   const saveBtn = btn('Guardar configuración', '', () => run(doSave), { 'data-fx': 'save' });
+  const useSavedBtn = btn('Usar el token guardado en el navegador', 'fx-btn--quiet', () => doUseSaved(), { 'data-fx': 'use-saved', hidden: true });
+  const savedNote = h('p', { class: 'fx-note', 'data-fx': 'saved-note', hidden: true },
+    h('b', {}, 'Si el navegador borra los datos de la app: '), 'al conectar, tu navegador puede preguntarte si quieres guardar la contraseña «Flujo: datos en GitHub». ',
+    'Di que sí: así podrás reconectar con un clic (botón «Usar el token guardado en el navegador») sin crear otro token. Tus datos siguen a salvo en GitHub.');
   const testBtn = btn('Probar conexión', 'fx-btn--primary', () => run(doTest), { 'data-fx': 'test' });
   const forgetBtn = btn('Olvidar token', 'fx-btn--quiet', () => run(doForget), { 'data-fx': 'forget' });
   const pushBtn = btn('Subir cambios', 'fx-btn--primary', () => run(doPush), { 'data-fx': 'push' });
@@ -115,7 +124,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     if (f) run(() => doRestore(f));
     fileIn.value = '';
   });
-  const actionBtns = [saveBtn, testBtn, forgetBtn, pushBtn, pullBtn, initialBtn, backupBtn, restoreBtn];
+  const actionBtns = [saveBtn, testBtn, forgetBtn, pushBtn, pullBtn, initialBtn, backupBtn, restoreBtn, useSavedBtn];
 
   const msgBox = h('div', { class: 'fx-msg', role: 'status', 'aria-live': 'polite', hidden: true });
   const progBar = h('progress', { class: 'fx-progress__bar', max: '100' });
@@ -228,12 +237,14 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
         h('div', { class: 'fx-field fx-field--token' },
           h('label', { class: 'fx-label', for: tokenIn.id }, 'Token de acceso'),
           h('div', { class: 'fx-row' }, tokenIn, toggleBtn),
-          h('span', { class: 'fx-hint', 'data-fx': 'token-hint' }))),
+          h('span', { class: 'fx-hint', 'data-fx': 'token-hint' }),
+          useSavedBtn)),
       h('p', { class: 'fx-note' },
         h('b', {}, 'Seguridad: '), 'el token se guarda solo en este dispositivo (en el almacenamiento del navegador) y únicamente se envía a GitHub. ',
         'No lo compartas ni lo pegues en otros sitios. Para conectar otro dispositivo no hace falta copiarlo: crea un código de conexión en uno que ya esté conectado («Usar en otro dispositivo»). ',
         'Si pierdes un dispositivo, revoca el token en GitHub ',
         '(Settings → Developer settings → Fine-grained tokens).'),
+      savedNote,
       h('div', { class: 'fx-actions' }, testBtn, saveBtn, forgetBtn)),
 
     h('div', { class: 'fx-card' },
@@ -259,6 +270,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
       h('div', { class: 'fx-actions' }, backupBtn, restoreBtn, fileIn)));
 
   containerEl.append(root);
+  loadRecover().then((R) => { if (R && !destroyed && R.credentialsSupported()) { useSavedBtn.hidden = false; savedNote.hidden = false; } });
 
   /* ------------------------------------------------------------ utilidades de interfaz */
   const nameOf = (id) => (id === 'meta' ? 'meta.json' : (metaNames.get(id) || id).trim());
@@ -346,6 +358,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     sync.setConfig(patch);
     if (!sync.getConfig().hasToken) { say('warn', 'Falta el token de acceso. Si aún no lo tienes, abre «Cómo crear el token» más abajo.'); return false; }
     await sync.saveConfig();
+    lastTyped = f.token ? { owner: f.owner, repo: f.repo, token: f.token } : null;     // se ofrece al navegador solo si la prueba de conexión funciona
     tokenIn.value = '';
     if (tokenIn.type !== 'password') toggleBtn.click();
     ownerIn.value = f.owner; repoIn.value = f.repo; branchIn.value = f.branch;
@@ -365,12 +378,40 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     for (const w of r.warnings) details.push({ ok: false, text: w });
     if (r.ok) say('ok', r.message, details);
     else say(r.code === 'PUBLIC_REPO' ? 'warn' : 'error', r.message, details);
+    if (r.ok && lastTyped) offerSaveToken(lastTyped);          // ya se comprobó que funciona: se ofrece guardarlo en el administrador de contraseñas del navegador
+    lastTyped = null;
+    // primer uso (este dispositivo aún no tiene datos): conectar ya significa «traer mis datos»; no hace falta otro botón
+    if (r.ok && !engine && typeof onBundleReplaced === 'function') await doPull();
   }
 
   async function doForget() {
     if (!window.confirm('¿Borrar el token de este dispositivo? Tendrás que pegarlo de nuevo para sincronizar. Tus datos locales no se tocan.')) return;
     await sync.clearToken();
+    lastTyped = null;
     say('info', 'El token se borró de este dispositivo.');
+  }
+
+  /** Ofrece guardar la conexión en el administrador de contraseñas del navegador (sin esperar; si no hay soporte no pasa nada). */
+  function offerSaveToken(c) { loadRecover().then((R) => (R ? R.saveToken(c) : null)).catch(() => { /* informativo */ }); }
+
+  /** Botón «Usar el token guardado en el navegador»: el navegador muestra su selector y devuelve usuario, repositorio y token. */
+  async function doUseSaved() {
+    if (busy || destroyed) return;
+    const R = await loadRecover();
+    const c = R ? await R.findToken({ silent: false }) : null;
+    if (!c) {
+      useSlot(syncSlot);
+      say('info', 'No encontré un token guardado en este navegador. Pégalo en el campo «Token de acceso» (si ya no lo tienes, crea uno nuevo en GitHub).');
+      return;
+    }
+    await useCredential(c);
+  }
+
+  /** Rellena usuario, repositorio y token con una conexión recuperada y la prueba (en el primer uso, además baja los datos). */
+  async function useCredential(c) {
+    if (destroyed || !c || !c.owner || !c.repo || !c.token) return;
+    ownerIn.value = c.owner; repoIn.value = c.repo; tokenIn.value = c.token;
+    await run(doTest);
   }
 
   async function doPush() {
@@ -622,6 +663,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     if (destroyed) return;                           // la persona salió de la pantalla: no se cambia nada
     sync.setConfig({ owner, repo, branch, token });
     await sync.saveConfig();                         // el token queda solo en IndexedDB
+    offerSaveToken({ owner, repo, token });
     ownerIn.value = owner; repoIn.value = repo; branchIn.value = branch; tokenIn.value = '';
     codeIn.value = ''; keyIn.value = '';             // ya cumplieron su trabajo
     showJoinForm();                                  // suelta la copia en memoria del token
@@ -708,6 +750,8 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
         try { keyIn.focus({ preventScroll: true }); } catch (_) { keyIn.focus(); }
       }, 80);
     },
+    /** Usa una conexión recuperada (usuario, repositorio, token): la prueba y, en el primer uso, baja los datos. */
+    useCredential,
     destroy() {
       if (destroyed) return;
       destroyed = true;

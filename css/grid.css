@@ -58,3 +58,11 @@
 
 /* v9: la celda activa y la barra de fórmula (donde se escribe en el celular) con 16 px: iOS no hace zoom al enfocarlas */
 @media (max-width: 899px) { .fxg-name, .fxg-formula { font-size: 16px; } }
+
+/* formato: negrita y colores (v19) */
+.fxg-tools .fxg-fmt { min-width: 34px; }
+.fxg-tools .fxg-fc { color: #C00000; font-weight: 700; border-bottom: 3px solid #C00000; }
+.fxg-tools .fxg-bg { display: inline-block; width: 14px; height: 12px; background: #FFFF00; border: 1px solid #b9b9b9; vertical-align: -1px; }
+.fxg-pal { position: fixed; z-index: 1000; display: grid; grid-template-columns: repeat(4, 40px); gap: 6px; padding: 8px; background: #fff; border: 1px solid #c9ced2; border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
+.fxg-pal button { width: 40px; height: 34px; border: 1px solid #b9b9b9; border-radius: 6px; cursor: pointer; padding: 0; font-size: 11px; background: #fff; color: #1d2b2e; }
+.fxg-pal button:last-child { grid-column: span 4; width: auto; height: 32px; font-size: 13px; }

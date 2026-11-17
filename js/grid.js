@@ -41,6 +41,10 @@ export class SheetGrid {
         <button data-act="paste" title="Pegar (Ctrl+V)">Pegar</button>
         <button data-act="fill" title="Rellenar hacia abajo (Ctrl+D)">Rellenar ↓</button>
         <button data-act="clear" title="Borrar contenido (Supr)">Borrar</button>
+        <button data-act="bold" class="fxg-fmt" title="Negrita (Ctrl+B)"><b>N</b></button>
+        <button data-act="fc" class="fxg-fmt" title="Color de letra"><span class="fxg-fc">A</span> ▾</button>
+        <button data-act="bg" class="fxg-fmt" title="Color de relleno"><span class="fxg-bg"></span> ▾</button>
+        <button data-act="unfmt" class="fxg-fmt" title="Quitar negrita y colores de lo seleccionado">Sin color</button>
         <button data-act="end" title="Ir al último dato">Ir al final ⇲</button>
         <button data-act="find" title="Buscar (Ctrl+F)">Buscar</button>
         <span class="fxg-sp"></span>
@@ -145,7 +149,7 @@ export class SheetGrid {
     if (this.tools) {
       for (const b of this.tools.querySelectorAll('button[data-act]')) {
         const act = b.dataset.act;
-        b.hidden = ro && (act === 'undo' || act === 'redo' || act === 'paste' || act === 'fill' || act === 'clear' || (act === 'find' && !this.opts.onFind));
+        b.hidden = ro && (act === 'undo' || act === 'redo' || act === 'paste' || act === 'fill' || act === 'clear' || act === 'bold' || act === 'fc' || act === 'bg' || act === 'unfmt' || (act === 'find' && !this.opts.onFind));
       }
     }
   }
@@ -598,6 +602,7 @@ export class SheetGrid {
       if (key === 'y') { e.preventDefault(); this._redo(); return; }
       if (key === 'a') { e.preventDefault(); this.anchor = { r: 0, c: 0 }; this.focus = { r: this.sh.rows - 1 || 0, c: Math.max(0, this.sh.cols - 1) }; this._afterSelect(false); return; }
       if (key === 'd') { e.preventDefault(); this._fillDown(); return; }
+      if (key === 'b') { e.preventDefault(); this._toggleBold(); return; }
       if (key === 'r') { e.preventDefault(); this._fillRight(); return; }
       if (key === 'f') { if (this.opts.onFind) { e.preventDefault(); this.opts.onFind(); } return; }
       return;                                    // Ctrl+C/X/V los atienden los eventos copy/cut/paste
@@ -708,7 +713,8 @@ export class SheetGrid {
     if (isNum && /^[-+]?\s*\$/.test(String(text).trim())) return '$#,##0.00';      // «$12.5» sin nada arriba: dólares con centavos
     return undefined;
   }
-  _afterChange(changes) {
+  _afterChange(changes, { fromUndo = false } = {}) {
+    if (!fromUndo) this._pushHist({ hf: true });
     this._relayoutIfGrown();
     this._paint(true); this._paintSel(); this._updateBar(); this._updateStatus();
     this.opts.onChange({ sid: this.sid, changes });
@@ -719,8 +725,67 @@ export class SheetGrid {
     const ch = this.eng.clear(this.sid, R.r0, R.c0, R.r1, R.c1);
     this._afterChange(ch);
   }
-  _undo() { if (this.opts.readOnly) return; const ch = this.eng.undo(); if (ch === null) this._toast('Nada que deshacer'); else this._afterChange(ch); }
-  _redo() { if (this.opts.readOnly) return; const ch = this.eng.redo(); if (ch === null) this._toast('Nada que rehacer'); else this._afterChange(ch); }
+  _undo() {
+    if (this.opts.readOnly) return;
+    const h = this._hist && this._hist.length ? this._hist.pop() : null;
+    if (h && h.fmt) { for (const [r, c, s] of h.fmt) this.sh.setStyle(r, c, s); this._afterFormat(); return; }   // el último cambio fue de formato
+    const ch = this.eng.undo(); if (ch === null) this._toast('Nada que deshacer'); else this._afterChange(ch, { fromUndo: true });
+  }
+  _redo() { if (this.opts.readOnly) return; const ch = this.eng.redo(); if (ch === null) this._toast('Nada que rehacer'); else this._afterChange(ch, { fromUndo: true }); }
+  _pushHist(x) { if (!this._hist) this._hist = []; this._hist.push(x); if (this._hist.length > 200) this._hist.shift(); }
+
+  /* ----------------------------------------------------------------- formato: negrita y colores (para conciliar) */
+  /** Aplica cambios de estilo a lo seleccionado (valor undefined = quitar). Se deshace con Deshacer o Ctrl+Z. */
+  _format(patch) {
+    if (this.opts.readOnly || !this.sh) return;
+    const R = this._rect();
+    if ((R.r1 - R.r0 + 1) * (R.c1 - R.c0 + 1) > 300000) { this._toast('La selección es demasiado grande para darle formato'); return; }
+    const prev = [];
+    for (let r = R.r0; r <= R.r1; r++) for (let c = R.c0; c <= R.c1; c++) {
+      const s = this.sh.styleAt(r, c), ns = this.eng.deriveStyle(s, patch);
+      if (ns !== s) { prev.push([r, c, s]); this.sh.setStyle(r, c, ns); }
+    }
+    if (!prev.length) return;
+    this._pushHist({ fmt: prev });
+    this._afterFormat();
+  }
+  _afterFormat() { this._relayoutIfGrown(); this._paint(true); this._paintSel(); this.opts.onChange({ sid: this.sid, changes: [], format: true }); }
+  _toggleBold() {
+    if (this.opts.readOnly || !this.sh) return;
+    const R = this._rect(); let all = true;
+    for (let r = R.r0; r <= R.r1 && all; r++) for (let c = R.c0; c <= R.c1 && all; c++) if (!(this.eng.styles[this.sh.styleAt(r, c)] || {}).b) all = false;
+    this._format({ b: all ? undefined : true });
+  }
+  /** Paleta de colores (letra o relleno) junto al botón. */
+  _palette(kind) {
+    if (this.opts.readOnly) return;
+    if (this._pal) { const same = this._pal.dataset.kind === kind; this._pal.remove(); this._pal = null; if (same) return; }
+    const colors = kind === 'fc'
+      ? [['#000000', 'Negro'], ['#C00000', 'Rojo'], ['#E36C09', 'Naranja'], ['#00803C', 'Verde'], ['#0070C0', 'Azul'], ['#7030A0', 'Morado'], ['#808080', 'Gris']]
+      : [['#FFFF00', 'Amarillo'], ['#C6EFCE', 'Verde claro'], ['#FFC7CE', 'Rojo claro'], ['#FCE4D6', 'Naranja claro'], ['#DDEBF7', 'Azul claro'], ['#E4DFEC', 'Morado claro'], ['#D9D9D9', 'Gris']];
+    const pal = document.createElement('div');
+    pal.className = 'fxg-pal'; pal.dataset.kind = kind; pal.setAttribute('role', 'menu');
+    pal.setAttribute('aria-label', kind === 'fc' ? 'Color de letra' : 'Color de relleno');
+    const add = (val, label, inner) => {
+      const b = document.createElement('button'); b.type = 'button'; b.title = label; b.setAttribute('aria-label', label); b.setAttribute('role', 'menuitem');
+      if (inner) b.textContent = inner; else b.style.background = val;
+      if (val) b.dataset.color = val;
+      b.addEventListener('click', () => { pal.remove(); this._pal = null; this._format({ [kind]: val || undefined }); this._focusKb(); });
+      pal.append(b);
+    };
+    for (const [v, l] of colors) add(v, l);
+    add(null, kind === 'fc' ? 'Letra normal' : 'Sin relleno', 'Ninguno');
+    const btn = this.tools && this.tools.querySelector('button[data-act="' + kind + '"]');
+    const rc = btn ? btn.getBoundingClientRect() : { left: 10, bottom: 60 };
+    pal.style.left = Math.max(6, Math.min(rc.left, window.innerWidth - 230)) + 'px';
+    pal.style.top = (rc.bottom + 4) + 'px';
+    document.body.append(pal); this._pal = pal;
+    const away = (e) => {
+      if (!pal.isConnected) { document.removeEventListener('pointerdown', away, true); return; }
+      if (!pal.contains(e.target) && !(btn && btn.contains(e.target))) { pal.remove(); if (this._pal === pal) this._pal = null; document.removeEventListener('pointerdown', away, true); }
+    };
+    setTimeout(() => document.addEventListener('pointerdown', away, true), 0);
+  }
 
   /* ----------------------------------------------------------------- rellenar */
   _fillDown() {
@@ -834,6 +899,9 @@ export class SheetGrid {
     if (act === 'redo') return this._redo();
     if (act === 'fill') return this._fillDown();
     if (act === 'clear') return this._clearSel();
+    if (act === 'bold') return this._toggleBold();
+    if (act === 'fc' || act === 'bg') return this._palette(act);
+    if (act === 'unfmt') return this._format({ b: undefined, fc: undefined, bg: undefined });
   }
   _toast(msg) { if (this.opts.onToast) this.opts.onToast(msg); else { this.stL.textContent = msg; clearTimeout(this._tt); this._tt = setTimeout(() => this._updateStatus(), 2500); } }
 }

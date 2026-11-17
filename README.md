@@ -38,6 +38,8 @@ Tus datos siguen en GitHub. Al conectar, la app ofrece guardar el token en el ad
 
 **Funciones en español:** escribe las fórmulas como en tu Excel en español: `=SUMAR.SI(C:C;A5;D:D)`, `=SI(A1>0;"sí";"no")`, `=BUSCARV(A1;B:C;2;FALSO)`, `=REDONDEAR(A1*1,15;2)`; sirven `;` o `,` entre argumentos, mayúsculas o minúsculas, y los nombres en inglés también. Al editar una celda la fórmula se muestra en español con `;`. Por dentro se guarda en inglés (`=SUMIF(C:C,A5,D:D)`, el mismo formato del archivo de Excel), así que la exportación a Excel y todas las demás fórmulas no cambian. Se traducen unas 200 funciones (`js/formula-es.js`); una que no esté en la tabla se escribe tal cual.
 
+**Negrita y colores (para conciliar):** en la barra de la hoja, «N» (o Ctrl+B) pone o quita negrita, «A ▾» cambia el color de la letra, el cuadro amarillo ▾ el relleno y «Sin color» los quita; el formato de número se conserva. Todo se guarda y se sincroniza, y «Deshacer» (Ctrl+Z) lo revierte en orden. En el celular la barra se abre con el botón de herramientas.
+
 **Formatos al anotar:** lo que tecleas en una celda sin formato toma el formato de la celda de arriba en esa columna (como Excel): las fechas quedan como fechas del estilo de la columna y los montos como dólares con centavos. Se guarda el valor completo; solo cambia cómo se muestra.
 
 En una hoja: toca una celda para seleccionarla, vuelve a tocar (o doble clic / F2) para editar. `Ctrl+Z` deshace, `Ctrl+D` rellena hacia abajo,

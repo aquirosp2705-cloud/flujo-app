@@ -10,7 +10,12 @@
  *   - los textos marcados en sheet.textCells ("0012345678", "12/05/2020"...) se escriben como TEXTO, sin fórmula.
  *   - anchos de columna (!cols, atributo width de Excel), columnas y filas ocultas, celdas combinadas (!merges), notas (comentarios),
  *     hojas ocultas (Workbook.Sheets[i].Hidden) y nombres definidos válidos (Workbook.Names).
- *   NO se escriben (la edición Community no los soporta): colores, negritas, bordes, paneles inmovilizados, color de pestaña.
+ *   - FORMATO VISUAL (v21): negrita, cursiva, subrayado, tachado, tamaño y color de letra, relleno, bordes, alineación,
+ *     ajuste de texto y sangría. SheetJS Community no los escribe, así que tras generar el archivo se reemplaza
+ *     xl/styles.xml por uno propio y se reescribe el atributo s="" de cada celda (applyCellStyles). Las celdas VACÍAS con
+ *     relleno o bordes se escriben como celdas sin valor que solo llevan el estilo. Si algo falla, se entrega el archivo
+ *     sin colores (report.stylesError) en vez de no entregar nada.
+ *   NO se escriben: paneles inmovilizados, color de pestaña.
  *
  * Nombre de hoja: Excel limita a 31 caracteres, prohíbe  : \ / ? * [ ]  y apóstrofos en los extremos, y algunas
  * versiones rechazan o recortan espacios al final ("Mi hoja "). Por defecto (trimSheetNames=true) el NOMBRE DE LA
@@ -263,7 +268,107 @@ function buildDefinedNames(engine, ctx, skippedList) {
 }
 
 /* ====================================================================================== una hoja */
-function buildSheet(engine, sh, ctx, origF) {
+/* ====================================================================================== formato visual (estilos) */
+const STUB = '⁣FLUJO-CELDA-VACIA⁣';         // marca de celda vacía con formato (separador invisible: no choca con datos reales)
+const MAX_STUBS = 300000;                               // tope por hoja de celdas vacías con formato
+const VISUAL_KEYS = ['b', 'i', 'u', 's', 'fc', 'bg', 'sz', 'h', 'v', 'w', 'ind', 'bd'];
+const hasVisual = (st) => !!st && VISUAL_KEYS.some((k) => st[k]);
+const hasStyle = (st) => !!st && (hasVisual(st) || (st.nf && st.nf !== 'General'));
+const H_ALIGN = new Set(['left', 'center', 'right', 'fill', 'justify', 'centerContinuous', 'distributed']);
+const V_ALIGN = new Set(['top', 'center', 'bottom', 'justify', 'distributed']);
+const xmlEsc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+/** "#rrggbb" / "#rgb" -> "FFRRGGBB" (null si no es un color válido) */
+export function argb(c) {
+  const t = String(c || '').trim();
+  let m = /^#?([0-9a-f]{6})$/i.exec(t);
+  if (!m) { const k = /^#?([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(t); if (k) m = [0, k[1] + k[1] + k[2] + k[2] + k[3] + k[3]]; }
+  return m ? 'FF' + m[1].toUpperCase() : null;
+}
+
+/** styles.xml propio para los estilos del motor usados. Devuelve { xml, xfOf: Map(idMotor -> índice de cellXfs) }. */
+export function buildStylesXml(styles, usedIds) {
+  const fonts = ['<font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font>'];
+  const fills = ['<fill><patternFill patternType="none"/></fill>', '<fill><patternFill patternType="gray125"/></fill>'];
+  const borders = ['<border><left/><right/><top/><bottom/><diagonal/></border>'];
+  const numFmts = [];
+  const xfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
+  const fontIx = new Map(), fillIx = new Map(), borderIx = new Map(), nfIx = new Map(), xfIx = new Map(), xfOf = new Map();
+  const intern = (map, list, key, mk) => { let i = map.get(key); if (i === undefined) { i = list.length; list.push(mk()); map.set(key, i); } return i; };
+  for (const id of usedIds) {
+    const st = styles[id] || {};
+    // letra
+    let fontId = 0;
+    const fc = argb(st.fc), sz = Number(st.sz) > 0 && Number(st.sz) < 410 ? Math.round(Number(st.sz) * 4) / 4 : 0;
+    if (st.b || st.i || st.u || st.s || fc || sz) {
+      const key = [st.b ? 1 : 0, st.i ? 1 : 0, st.u ? 1 : 0, st.s ? 1 : 0, fc || '', sz || ''].join('|');
+      fontId = intern(fontIx, fonts, key, () => '<font>' + (st.b ? '<b/>' : '') + (st.i ? '<i/>' : '') + (st.s ? '<strike/>' : '') + (st.u ? '<u/>' : '') +
+        '<sz val="' + (sz || 11) + '"/>' + (fc ? '<color rgb="' + fc + '"/>' : '<color theme="1"/>') + '<name val="Calibri"/><family val="2"/><scheme val="minor"/></font>');
+    }
+    // relleno
+    const bg = argb(st.bg);
+    const fillId = bg ? intern(fillIx, fills, bg, () => '<fill><patternFill patternType="solid"><fgColor rgb="' + bg + '"/><bgColor indexed="64"/></patternFill></fill>') : 0;
+    // bordes (finos, como los muestra la app)
+    const sides = typeof st.bd === 'string' ? ['l', 'r', 't', 'b'].filter((ch) => st.bd.includes(ch)).join('') : '';
+    const side = (ch, tag) => sides.includes(ch) ? '<' + tag + ' style="thin"><color indexed="64"/></' + tag + '>' : '<' + tag + '/>';
+    const borderId = sides ? intern(borderIx, borders, sides, () => '<border>' + side('l', 'left') + side('r', 'right') + side('t', 'top') + side('b', 'bottom') + '<diagonal/></border>') : 0;
+    // formato numérico (siempre personalizado desde 164: Excel acepta un código igual al de un formato integrado)
+    const nf = st.nf && st.nf !== 'General' ? String(st.nf) : '';
+    const numFmtId = nf ? intern(nfIx, numFmts, nf, () => '<numFmt numFmtId="' + (164 + numFmts.length) + '" formatCode="' + xmlEsc(nf) + '"/>') + 164 : 0;
+    // alineación
+    const h = H_ALIGN.has(st.h) ? st.h : '', v = V_ALIGN.has(st.v) ? st.v : '';
+    const ind = Number.isInteger(st.ind) && st.ind > 0 && st.ind < 251 ? st.ind : 0;
+    const hh = h || (ind ? 'left' : '');
+    const al = (hh || v || st.w || ind) ? '<alignment' + (hh ? ' horizontal="' + hh + '"' : '') + (v ? ' vertical="' + v + '"' : '') +
+      (st.w ? ' wrapText="1"' : '') + (ind ? ' indent="' + ind + '"' : '') + '/>' : '';
+    const key = [numFmtId, fontId, fillId, borderId, al].join('|');
+    xfOf.set(id, intern(xfIx, xfs, key, () => '<xf numFmtId="' + numFmtId + '" fontId="' + fontId + '" fillId="' + fillId + '" borderId="' + borderId + '" xfId="0"' +
+      (numFmtId ? ' applyNumberFormat="1"' : '') + (fontId ? ' applyFont="1"' : '') + (fillId ? ' applyFill="1"' : '') + (borderId ? ' applyBorder="1"' : '') +
+      (al ? ' applyAlignment="1">' + al + '</xf>' : '/>')));
+  }
+  const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    (numFmts.length ? '<numFmts count="' + numFmts.length + '">' + numFmts.join('') + '</numFmts>' : '') +
+    '<fonts count="' + fonts.length + '">' + fonts.join('') + '</fonts>' +
+    '<fills count="' + fills.length + '">' + fills.join('') + '</fills>' +
+    '<borders count="' + borders.length + '">' + borders.join('') + '</borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="' + xfs.length + '">' + xfs.join('') + '</cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+    '<dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleMedium4"/></styleSheet>';
+  return { xml, xfOf };
+}
+
+/** Reescribe el .xlsx que generó SheetJS: styles.xml propio + s="" de cada celda + celdas vacías con formato. */
+export function applyCellStyles(XLSX, bytes, styles, styleMaps) {
+  const CFB = XLSX && XLSX.CFB;
+  if (!CFB || !CFB.read || !CFB.write || !CFB.find) throw new Error('SheetJS sin CFB');
+  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const zip = CFB.read(u8, { type: 'buffer' });
+  const used = new Set();
+  for (const m of styleMaps) for (const id of m.values()) used.add(id);
+  const { xml, xfOf } = buildStylesXml(styles, used);
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const entry = (path) => { const e = CFB.find(zip, path); if (!e) throw new Error('falta ' + path + ' en el archivo'); return e; };
+  const get = (path) => { const e = entry(path); return dec.decode(e.content instanceof Uint8Array ? e.content : new Uint8Array(e.content)); };
+  const put = (path, text) => { const e = entry(path); e.content = enc.encode(text); e.size = e.content.length; };
+  put('/xl/styles.xml', xml);
+  const stubRe = new RegExp('<c r="([A-Z]+[0-9]+)"[^>]*>(?:<v>|<is><t>)' + STUB + '(?:</v>|</t></is>)</c>', 'g');
+  styleMaps.forEach((map, i) => {
+    const path = '/xl/worksheets/sheet' + (i + 1) + '.xml';
+    let x = get(path);
+    x = x.replace(stubRe, (m, ref) => { const xf = xfOf.get(map.get(ref)) || 0; return '<c r="' + ref + '"' + (xf ? ' s="' + xf + '"' : '') + '/>'; });
+    x = x.replace(/<c r="([A-Z]+[0-9]+)"([^>]*)>/g, (m, ref, rest) => {
+      rest = rest.replace(/\s+s="\d+"/, '');
+      const id = map.get(ref), xf = id ? (xfOf.get(id) || 0) : 0;
+      return '<c r="' + ref + '"' + (xf ? ' s="' + xf + '"' : '') + rest + '>';
+    });
+    if (x.includes(STUB)) throw new Error('quedó una marca de celda vacía en la hoja ' + (i + 1));
+    put(path, x);
+  });
+  return CFB.write(zip, { fileType: 'zip', type: 'array', compression: true });
+}
+
+function buildSheet(engine, sh, ctx, origF, withStubs = true) {
   const sid = sh.id;
   const data = engine.exportSheet(sid);
   const ws = {};
@@ -271,6 +376,7 @@ function buildSheet(engine, sh, ctx, origF) {
   const col = (c) => letters[c] || (letters[c] = colLetter(c));
   let maxR = -1, maxC = -1, nCells = 0, nFormulas = 0, nFrozen = 0, nRestored = 0;
   const bump = (r, c) => { if (r > maxR) maxR = r; if (c > maxC) maxC = c; };
+  const styleMap = new Map();          // "A1" -> id de estilo del motor (solo celdas con algún formato)
 
   for (const cell of data.cells) {
     const r = cell[0], c = cell[1];
@@ -293,10 +399,31 @@ function buildSheet(engine, sh, ctx, origF) {
       xc = valueToCell(v);
       if (!xc) continue;
     }
-    const nf = engine.styleOf(sid, r, c).nf;
+    const stId = sh.styleAt(r, c), nf = (engine.styles[stId] || {}).nf;
     if (nf && nf !== 'General') xc.z = nf;
-    ws[col(c) + (r + 1)] = xc;
+    const ref = col(c) + (r + 1);
+    ws[ref] = xc;
+    if (stId && hasStyle(engine.styles[stId])) styleMap.set(ref, stId);
     nCells++; bump(r, c);
+  }
+
+  // celdas vacías con relleno o bordes (lo único que se ve en una celda vacía): se escribe una marca que applyCellStyles cambia por una celda vacía con estilo
+  let nStubs = 0;
+  if (withStubs && sh.styleGrid && sh.sCols) {
+    const G = sh.styleGrid, W = sh.sCols, visual = new Map();
+    const isVisual = (id) => { let v = visual.get(id); if (v === undefined) { const st = engine.styles[id]; v = !!st && !!(argb(st.bg) || st.bd); visual.set(id, v); } return v; };
+    outer: for (let r = 0; r < sh.sRows; r++) {
+      for (let c = 0; c < W; c++) {
+        const id = G[r * W + c];
+        if (!id || !isVisual(id)) continue;
+        const ref = col(c) + (r + 1);
+        if (ws[ref]) continue;
+        if (nStubs >= MAX_STUBS) break outer;
+        ws[ref] = { t: 's', v: STUB };
+        styleMap.set(ref, id);
+        nStubs++; bump(r, c);
+      }
+    }
   }
 
   // notas -> comentarios (en celdas sin contenido se crea una celda de texto vacía para colgar la nota)
@@ -304,6 +431,7 @@ function buildSheet(engine, sh, ctx, origF) {
     const r = Math.floor(key / 4096), c = key % 4096;
     const ref = col(c) + (r + 1);
     let xc = ws[ref];
+    if (xc && xc.v === STUB) { xc = { t: 's', v: '' }; ws[ref] = xc; }      // la nota necesita una celda real
     if (!xc) { xc = { t: 's', v: '' }; ws[ref] = xc; nCells++; bump(r, c); }
     xc.c = [{ a: 'Flujo', t: String(text) }];
     xc.c.hidden = true;
@@ -331,7 +459,7 @@ function buildSheet(engine, sh, ctx, origF) {
   if (rows.length) ws['!rows'] = rows;
 
   if (maxR >= 0) ws['!ref'] = 'A1:' + col(maxC) + (maxR + 1);
-  return { ws, nCells, nFormulas, nFrozen, nRestored };
+  return { ws, nCells, nFormulas, nFrozen, nRestored, styleMap, nStubs };
 }
 
 /* ====================================================================================== libro completo */
@@ -375,7 +503,7 @@ function* buildXlsxSteps(engine, opts) {
   const names = buildDefinedNames(engine, ctx, skippedNames);
 
   const wb = XLSX.utils.book_new();
-  const stats = [];
+  const stats = [], styleMaps = [];
   let frozen = 0, restored = 0;
   for (let i = 0; i < sheets.length; i++) {
     const sh = sheets[i];
@@ -383,9 +511,9 @@ function* buildXlsxSteps(engine, opts) {
     // El motor carga de forma diferida las hojas que ninguna otra necesita; sin cargarlas no hay valores que exportar.
     // (Cargar una hoja vacía el historial de deshacer del motor.)
     if (sh.loaded === false && typeof engine.ensureLoaded === 'function') engine.ensureLoaded(sh.id);
-    const b = buildSheet(engine, sh, ctx, useOriginalFormulas ? originalFormulas(engine, sh) : null);
+    const b = buildSheet(engine, sh, ctx, useOriginalFormulas ? originalFormulas(engine, sh) : null, opts.styles !== false);
     XLSX.utils.book_append_sheet(wb, b.ws, nameById.get(sh.id));
-    frozen += b.nFrozen; restored += b.nRestored;
+    frozen += b.nFrozen; restored += b.nRestored; styleMaps.push(b.styleMap);
     stats.push({ id: sh.id, name: sh.name, exportedName: nameById.get(sh.id), hidden: !!sh.hidden, cells: b.nCells, formulas: b.nFormulas, frozen: b.nFrozen });
   }
   yield { done: sheets.length, total: sheets.length, sheet: null };    // todas listas: falta escribir el archivo
@@ -398,13 +526,24 @@ function* buildXlsxSteps(engine, opts) {
 
   let bytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true });
   if (!(bytes instanceof ArrayBuffer) && !ArrayBuffer.isView(bytes)) bytes = Uint8Array.from(bytes);
+  let stylesError = null;
+  if (opts.styles !== false) {
+    try { bytes = applyCellStyles(XLSX, bytes, engine.styles, styleMaps); }
+    catch (e) {
+      stylesError = String((e && e.message) || e); console.warn('[export] el Excel sale sin colores:', e);
+      // sin estilos no hay quien cambie las marcas de celdas vacías: se quitan y se vuelve a escribir el archivo
+      for (const name of wb.SheetNames) { const ws = wb.Sheets[name]; for (const k of Object.keys(ws)) if (ws[k] && ws[k].v === STUB) delete ws[k]; }
+      bytes = XLSX.write(wb, { bookType: 'xlsx', type: 'array', compression: true });
+      if (!(bytes instanceof ArrayBuffer) && !ArrayBuffer.isView(bytes)) bytes = Uint8Array.from(bytes);
+    }
+  }
   const blob = new Blob([bytes], { type: XLSX_MIME });
 
   if (report && typeof report === 'object') {
     Object.assign(report, {
       sheets: stats, renamed, names: names.map((n) => n.Name), skippedNames,
       cells: stats.reduce((a, s) => a + s.cells, 0), formulas: stats.reduce((a, s) => a + s.formulas, 0),
-      frozenFormulas: frozen, restoredFormulas: restored, bytes: blob.size, ms: Math.round(performance.now() - t0),
+      frozenFormulas: frozen, restoredFormulas: restored, bytes: blob.size, stylesError, ms: Math.round(performance.now() - t0),
     });
   }
   return blob;

@@ -115,3 +115,10 @@ GPL-3.0 (ver `LICENSE`). Incluye [HyperFormula](https://hyperformula.handsontabl
 Al editar una celda con fórmula (doble clic, F2, Enter o en la barra de fórmulas), cada celda o rango de **esta hoja**
 que usa la fórmula se enciende con un recuadro de color (como Excel). Se actualiza al escribir y se apaga al terminar.
 Las referencias a otras hojas no se marcan.
+
+## Excel con formato (v21)
+«Descargar Excel» (y el Excel de un mes archivado) sale con negrita, cursiva, subrayado, tachado, tamaño y color de
+letra, relleno, bordes, alineación, ajuste de texto y sangría, además de los formatos de número. SheetJS Community no
+escribe estilos: `applyCellStyles` (js/export.js) cambia xl/styles.xml y el `s=""` de cada celda dentro del zip. Las
+celdas vacías con relleno o borde también salen. Si el coloreado fallara, el archivo se entrega igual, sin colores
+(`report.stylesError`). Prueba: `_e2e/excel_formato_e2e.py`.

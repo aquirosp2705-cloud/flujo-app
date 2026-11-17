@@ -117,6 +117,8 @@ export function parseInput(text, st) {
     const serial = Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000);
     return { raw: serial, nf: (st && st.nf && isDateFormat(st.nf)) ? undefined : 'dd/mm/yyyy' };
   }
+  // como en Excel, un «+» o «-» al principio que no es un número empieza una fórmula: «+H2050+E2051», «-A1», «+SUM(A1:A3)», «+5*2»
+  if (/^[+-]\s*(?:\(|\$?[A-Za-z]{1,3}\$?\d|[A-Za-z][A-Za-z0-9.]*\(|\d)/.test(t) && !/\d\s+\d/.test(t)) return { raw: '=' + t };
   return { raw: s };
 }
 

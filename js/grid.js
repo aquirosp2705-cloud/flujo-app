@@ -67,9 +67,9 @@ export class SheetGrid {
     this.kb = q('.fxg-kb'); this.stL = q('.fxg-st-l'); this.stR = q('.fxg-st-r'); this.zv = q('.fxg-zv');
 
     const mk = (cls) => { const d = document.createElement('div'); d.className = cls; return d; };
-    this.selEl = mk('fxg-sel'); this.actEl = mk('fxg-act'); this.handle = mk('fxg-handle'); this.clipEl = mk('fxg-clipbox'); this.fillEl = mk('fxg-fillbox');
+    this.selEl = mk('fxg-sel'); this.actEl = mk('fxg-act'); this.handle = mk('fxg-handle'); this.clipEl = mk('fxg-clipbox'); this.fillEl = mk('fxg-fillbox'); this.pointEl = mk('fxg-pointbox'); this._point = null;
     this.ed = document.createElement('input'); this.ed.className = 'fxg-ed'; this.ed.spellcheck = false; this.ed.autocomplete = 'off'; this.ed.setAttribute('autocapitalize', 'off');
-    this.layer.append(this.selEl, this.clipEl, this.fillEl, this.actEl, this.handle, this.ed);
+    this.layer.append(this.selEl, this.clipEl, this.fillEl, this.pointEl, this.actEl, this.handle, this.ed);
 
     const on = (t, ev, fn, o) => { t.addEventListener(ev, fn, o); this._listeners.push([t, ev, fn, o]); };
     on(this.scroll, 'scroll', () => this._schedulePaint());
@@ -89,9 +89,9 @@ export class SheetGrid {
     on(this.kb, 'paste', (e) => { e.preventDefault(); this._paste(e.clipboardData.getData('text/plain')); });
     on(this.ed, 'keydown', (e) => this._onEdKey(e));
     on(this.ed, 'blur', () => { if (this.edit) this._commitEdit(null); });
-    on(this.ed, 'input', () => { if (this.edit && !this.barEditing) this.bar.value = this.ed.value; });
+    on(this.ed, 'input', () => { this._pointReset(); if (this.edit && !this.barEditing) this.bar.value = this.ed.value; });
     on(this.bar, 'focus', () => { this.barEditing = true; this.barDirty = false; });
-    on(this.bar, 'input', () => { this.barDirty = true; });
+    on(this.bar, 'input', () => { this._pointReset(); this.barDirty = true; });
     on(this.bar, 'keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); this._commitBar(); this._focusKb(); this._move(1, 0); }
       else if (e.key === 'Escape') { e.preventDefault(); this.barDirty = false; this.bar.blur(); this._focusKb(); this._updateBar(); }
@@ -402,6 +402,39 @@ export class SheetGrid {
     this.stR.textContent = n ? `Suma ${f(sum)} · Promedio ${f(sum / n)} · Cuenta ${cnt}` : (cnt ? `Cuenta ${cnt}` : '');
   }
 
+  /* ------------------------------------------------------------------ apuntar (como Excel)
+   * Mientras se escribe una fórmula (empieza con = + -) y el cursor está donde va una celda (después de un operador, «(», «,»…), un clic en otra celda,
+   * Mayús+clic, arrastrar o una flecha INSERTAN su dirección (H2050, A1:B3) en vez de terminar la edición; otro clic seguido la cambia por la nueva. */
+  _pointField() {
+    let el = null;
+    if (this.edit && this.ed.style.display !== 'none') el = this.ed;
+    else if (this.barEditing && document.activeElement === this.bar && !this.opts.readOnly) el = this.bar;
+    if (!el) return null;
+    const v = el.value, a = el.selectionStart, b = el.selectionEnd;
+    if (!v || !'=+-'.includes(v[0]) || a == null) return null;
+    const p = this._point;
+    if (p && p.el === el && a === p.end && b === p.end && v.slice(p.start, p.end) === p.text) return el;      // justo tras la celda apuntada: se puede cambiar por otra
+    const before = v.slice(0, a).replace(/\s+$/, '');
+    return before && '=+-*/^(,;&<>:'.includes(before[before.length - 1]) ? el : null;
+  }
+  _pointInsert(el, r, c, r2 = r, c2 = c) {
+    const m = this.sh.mergeAt(r, c); if (m) { r = m.r0; c = m.c0; }
+    const a1 = (rr, cc) => colLetter(cc) + (rr + 1);
+    const lo = { r: Math.min(r, r2), c: Math.min(c, c2) }, hi = { r: Math.max(r, r2), c: Math.max(c, c2) };
+    const text = (lo.r === hi.r && lo.c === hi.c) ? a1(lo.r, lo.c) : a1(lo.r, lo.c) + ':' + a1(hi.r, hi.c);
+    const v = el.value, p = this._point;
+    let start = el.selectionStart, end = el.selectionEnd;
+    if (p && p.el === el && v.slice(p.start, p.end) === p.text && start === p.end && end === p.end) { start = p.start; end = p.end; }
+    el.value = v.slice(0, start) + text + v.slice(end);
+    const pos = start + text.length;
+    try { el.setSelectionRange(pos, pos); } catch (e) { /* sin selección */ }
+    this._point = { el, start, end: pos, text, r: lo.r, c: lo.c };
+    if (el === this.ed) this.bar.value = el.value; else this.barDirty = true;
+    this._box(this.pointEl, { r0: lo.r, c0: lo.c, r1: hi.r, c1: hi.c });
+    try { el.focus({ preventScroll: true }); } catch (e) { /* */ }
+  }
+  _pointReset() { this._point = null; if (this.pointEl) this.pointEl.style.display = 'none'; }
+
   /* ------------------------------------------------------------------ ratón */
   _cellAt(e) {
     const rect = this.scroll.getBoundingClientRect();
@@ -417,6 +450,16 @@ export class SheetGrid {
     if (e.target === this.ed || e.target === this.handle) return;
     const cell = this._cellAt(e);
     if (cell.onScrollbar) return;
+    if (e.pointerType === 'mouse' && e.button === 0) {
+      const pf = this._pointField();
+      if (pf) {                                              // escribiendo una fórmula: el clic inserta la celda
+        e.preventDefault();
+        const p = this._point, from = e.shiftKey && p && p.el === pf ? { r: p.r, c: p.c } : { r: cell.r, c: cell.c };
+        this._pointInsert(pf, from.r, from.c, cell.r, cell.c);
+        this.drag = { type: 'point', el: pf, from };
+        return;
+      }
+    }
     if (this.edit) this._commitEdit(null);
     if (e.pointerType === 'mouse') {
       if (e.button !== 0) return;
@@ -431,6 +474,7 @@ export class SheetGrid {
   _onPointerMove(e) {
     if (!this.drag) return;
     const cell = this._cellAt(e);
+    if (this.drag.type === 'point') { this._pointInsert(this.drag.el, this.drag.from.r, this.drag.from.c, cell.r, cell.c); this._autoScroll(e); return; }
     if (this.drag.type === 'select') {
       if (cell.r !== this.focus.r || cell.c !== this.focus.c) { this.focus = { r: cell.r, c: cell.c }; this._afterSelect(false); this._autoScroll(e); }
     } else if (this.drag.type === 'fill') {
@@ -467,6 +511,7 @@ export class SheetGrid {
     }
     if (!this.drag) return;
     const d = this.drag; this.drag = null;
+    if (d.type === 'point') { try { d.el.focus({ preventScroll: true }); } catch (err) { /* */ } return; }
     if (d.type === 'fill') {
       this.fillEl.style.display = 'none';
       if (d.target) this._doFill(d.src, d.target);
@@ -577,7 +622,7 @@ export class SheetGrid {
     this._ensureVisible(r, c);
     const orig = this._rawText(r, c);
     const text = initial != null ? initial : orig;
-    this.edit = { r, c, mode, orig };
+    this.edit = { r, c, mode, orig }; this._pointReset();
     const R = this._cellRect(r, c), ed = this.ed;
     ed.style.cssText = `display:block;left:${R.x}px;top:${R.y}px;min-width:${Math.max(R.w, 80)}px;width:${Math.max(R.w, 80)}px;height:${R.h}px;font-size:${13 * this.zoom}px`;
     ed.value = text; this.bar.value = text;
@@ -593,12 +638,19 @@ export class SheetGrid {
     else if (k === 'F2') { e.preventDefault(); this.edit.mode = this.edit.mode === 'enter' ? 'edit' : 'enter'; }
     else if (this.edit.mode === 'enter' && (k === 'ArrowUp' || k === 'ArrowDown' || k === 'ArrowLeft' || k === 'ArrowRight')) {
       e.preventDefault(); const d = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[k];
+      if (this._pointField() === this.ed) {                  // escribiendo una fórmula: la flecha apunta a la celda vecina
+        const p = this._point && this._point.el === this.ed ? this._point : null;
+        const base = p ? { r: p.r, c: p.c } : { r: this.edit.r, c: this.edit.c };
+        const nr = Math.max(0, base.r + d[0]), nc = Math.max(0, Math.min(this.nCols - 1, base.c + d[1]));
+        this._ensureVisible(nr, nc); this._pointInsert(this.ed, nr, nc);
+        return;
+      }
       this._commitEdit({ dr: d[0], dc: d[1] });
     }
   }
   _commitEdit(move) {
     const e = this.edit; if (!e) return;
-    this.edit = null;
+    this.edit = null; this._pointReset();
     const text = this.ed.value;
     this.ed.style.display = 'none';
     if (text !== e.orig) this._applyText(e.r, e.c, text);
@@ -606,7 +658,7 @@ export class SheetGrid {
     this._updateBar();
     if (move) this._move(move.dr, move.dc);
   }
-  _cancelEdit() { if (!this.edit) return; this.edit = null; this.ed.style.display = 'none'; this._focusKb(); this._updateBar(); }
+  _cancelEdit() { if (!this.edit) return; this.edit = null; this._pointReset(); this.ed.style.display = 'none'; this._focusKb(); this._updateBar(); }
   _commitBar() {
     if (this.opts.readOnly || !this.barDirty || !this.sh) { this.barDirty = false; return; }
     this.barDirty = false;

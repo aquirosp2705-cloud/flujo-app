@@ -110,3 +110,8 @@ Una fórmula de `SUMIF` cuyo rango ampliado generaba una referencia circular se 
 ## Licencia
 
 GPL-3.0 (ver `LICENSE`). Incluye [HyperFormula](https://hyperformula.handsontable.com/) (GPL-3.0), [SSF](https://github.com/SheetJS/ssf) y [SheetJS Community](https://sheetjs.com/) (Apache-2.0); sus licencias están en `vendor/`.
+
+## Celdas de la fórmula encendidas (v20)
+Al editar una celda con fórmula (doble clic, F2, Enter o en la barra de fórmulas), cada celda o rango de **esta hoja**
+que usa la fórmula se enciende con un recuadro de color (como Excel). Se actualiza al escribir y se apaga al terminar.
+Las referencias a otras hojas no se marcan.

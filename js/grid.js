@@ -8,9 +8,31 @@
  * Ratón: clic/arrastre, doble clic = editar, asa de relleno (cuadrito azul) arrastrando hacia abajo/derecha, borde de encabezado = ancho.
  * Táctil: tocar = seleccionar, tocar de nuevo = editar; barra de herramientas con deshacer, copiar, pegar, rellenar, zoom, ir al final.
  */
-import { cellKey as K, colLetter, addrToA1 } from './engine.js';
+import { cellKey as K, colLetter, addrToA1, a1ToAddr } from './engine.js';
 import { fmtCell, styleCss, editText, parseInput, isDateFormat } from './format.js';
 import { toSpanish } from './formula-es.js';
+
+/* Colores de las celdas que usa la fórmula que se está editando (como Excel: cada referencia con su color). */
+const REF_COLORS = ['#1c7ed6', '#e8590c', '#7048e8', '#2f9e44', '#d6336c', '#0c8599', '#f59f00', '#5c940d'];
+/** Referencias de una fórmula que apuntan a ESTA hoja: [{ text, r0, c0, r1, c1 }]. Ignora textos entre comillas, nombres de
+ *  función (LOG10( …) y referencias a otras hojas ('Otra hoja'!A1). */
+export function formulaRefs(text, sheetName) {
+  if (!text || !'=+-'.includes(text[0])) return [];
+  const t = text.replace(/"(?:[^"]|"")*"?/g, (m) => ' '.repeat(m.length));
+  const re = /(?:('(?:[^']|'')+'|[A-Za-z_À-ɏ][\w.À-ɏ]*)!)?(\$?[A-Za-z]{1,3}\$?\d{1,7})(?::(\$?[A-Za-z]{1,3}\$?\d{1,7}))?/g;
+  const me = String(sheetName || '').trim().toLowerCase(), out = [];
+  let m;
+  while ((m = re.exec(t))) {
+    const prev = m.index > 0 ? t[m.index - 1] : '';
+    const next = t[m.index + m[0].length] || '';
+    if (/[\w.$:!'À-ɏ]/.test(prev) || /[\w(!À-ɏ]/.test(next)) continue;
+    if (m[1]) { const sh = (m[1][0] === "'" ? m[1].slice(1, -1).replace(/''/g, "'") : m[1]).trim().toLowerCase(); if (sh !== me) continue; }
+    const a = a1ToAddr(m[2]), b = m[3] ? a1ToAddr(m[3]) : a;
+    if (!a || !b) continue;
+    out.push({ text: (m[2] + (m[3] ? ':' + m[3] : '')).replace(/\$/g, '').toUpperCase(), r0: Math.min(a.r, b.r), c0: Math.min(a.c, b.c), r1: Math.max(a.r, b.r), c1: Math.max(a.c, b.c) });
+  }
+  return out;
+}
 
 const ROW_H = 22, DEF_W = 64, ROWHDR_W = 46, COLHDR_H = 22, MAX_OVERFLOW = 700;
 const EMPTY = {};
@@ -72,7 +94,7 @@ export class SheetGrid {
     this.kb = q('.fxg-kb'); this.stL = q('.fxg-st-l'); this.stR = q('.fxg-st-r'); this.zv = q('.fxg-zv');
 
     const mk = (cls) => { const d = document.createElement('div'); d.className = cls; return d; };
-    this.selEl = mk('fxg-sel'); this.actEl = mk('fxg-act'); this.handle = mk('fxg-handle'); this.clipEl = mk('fxg-clipbox'); this.fillEl = mk('fxg-fillbox'); this.pointEl = mk('fxg-pointbox'); this._point = null;
+    this.selEl = mk('fxg-sel'); this.actEl = mk('fxg-act'); this.handle = mk('fxg-handle'); this.clipEl = mk('fxg-clipbox'); this.fillEl = mk('fxg-fillbox'); this.pointEl = mk('fxg-pointbox'); this._point = null; this._refBoxes = [];
     this.ed = document.createElement('input'); this.ed.className = 'fxg-ed'; this.ed.spellcheck = false; this.ed.autocomplete = 'off'; this.ed.setAttribute('autocapitalize', 'off');
     this.layer.append(this.selEl, this.clipEl, this.fillEl, this.pointEl, this.actEl, this.handle, this.ed);
 
@@ -94,14 +116,14 @@ export class SheetGrid {
     on(this.kb, 'paste', (e) => { e.preventDefault(); this._paste(e.clipboardData.getData('text/plain')); });
     on(this.ed, 'keydown', (e) => this._onEdKey(e));
     on(this.ed, 'blur', () => { if (this.edit) this._commitEdit(null); });
-    on(this.ed, 'input', () => { this._pointReset(); if (this.edit && !this.barEditing) this.bar.value = this.ed.value; });
-    on(this.bar, 'focus', () => { this.barEditing = true; this.barDirty = false; });
-    on(this.bar, 'input', () => { this._pointReset(); this.barDirty = true; });
+    on(this.ed, 'input', () => { this._pointReset(); if (this.edit && !this.barEditing) this.bar.value = this.ed.value; this._paintRefs(this.ed.value); });
+    on(this.bar, 'focus', () => { this.barEditing = true; this.barDirty = false; if (!this.opts.readOnly) this._paintRefs(this.bar.value); });
+    on(this.bar, 'input', () => { this._pointReset(); this.barDirty = true; this._paintRefs(this.bar.value); });
     on(this.bar, 'keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); this._commitBar(); this._focusKb(); this._move(1, 0); }
       else if (e.key === 'Escape') { e.preventDefault(); this.barDirty = false; this.bar.blur(); this._focusKb(); this._updateBar(); }
     });
-    on(this.bar, 'blur', () => { this._commitBar(); this.barEditing = false; this._updateBar(); });
+    on(this.bar, 'blur', () => { this._commitBar(); this.barEditing = false; this._updateBar(); if (!this.edit) this._paintRefs(''); });
     on(this.nameBox, 'keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.goTo(this.nameBox.value); this._focusKb(); } else if (e.key === 'Escape') { this._updateName(); this._focusKb(); } });
     on(this.nameBox, 'focus', () => this.nameBox.select());
     if (this.tools) on(this.tools, 'click', (e) => { const b = e.target.closest('button[data-act]'); if (b) this._tool(b.dataset.act); });
@@ -435,10 +457,30 @@ export class SheetGrid {
     try { el.setSelectionRange(pos, pos); } catch (e) { /* sin selección */ }
     this._point = { el, start, end: pos, text, r: lo.r, c: lo.c };
     if (el === this.ed) this.bar.value = el.value; else this.barDirty = true;
+    this._paintRefs(el.value);
     this._box(this.pointEl, { r0: lo.r, c0: lo.c, r1: hi.r, c1: hi.c });
     try { el.focus({ preventScroll: true }); } catch (e) { /* */ }
   }
   _pointReset() { this._point = null; if (this.pointEl) this.pointEl.style.display = 'none'; }
+  /** Enciende con un recuadro de color cada celda o rango de esta hoja que usa la fórmula en edición ('' = apagar). */
+  _paintRefs(text) {
+    for (const b of this._refBoxes) b.remove();
+    this._refBoxes = [];
+    if (!this.sh || !text) return;
+    const refs = formulaRefs(text, this.sh.name), colors = new Map();
+    for (const R of refs.slice(0, 40)) {
+      if (R.r0 >= this.nTotal || R.c0 >= this.nCols) continue;
+      const box = { r0: R.r0, c0: R.c0, r1: Math.min(R.r1, this.nTotal - 1), c1: Math.min(R.c1, this.nCols - 1) };
+      if (box.r0 === box.r1 && box.c0 === box.c1) { const mg = this.sh.mergeAt(box.r0, box.c0); if (mg) Object.assign(box, mg); }
+      if (!colors.has(R.text)) colors.set(R.text, REF_COLORS[colors.size % REF_COLORS.length]);
+      const col = colors.get(R.text), el = document.createElement('div');
+      el.className = 'fxg-refbox'; el.dataset.ref = R.text;
+      this._box(el, box);
+      el.style.borderColor = col; el.style.background = col + '1f';
+      this.layer.insertBefore(el, this.pointEl);
+      this._refBoxes.push(el);
+    }
+  }
 
   /* ------------------------------------------------------------------ ratón */
   _cellAt(e) {
@@ -631,7 +673,7 @@ export class SheetGrid {
     this.edit = { r, c, mode, orig }; this._pointReset();
     const R = this._cellRect(r, c), ed = this.ed;
     ed.style.cssText = `display:block;left:${R.x}px;top:${R.y}px;min-width:${Math.max(R.w, 80)}px;width:${Math.max(R.w, 80)}px;height:${R.h}px;font-size:${13 * this.zoom}px`;
-    ed.value = text; this.bar.value = text;
+    ed.value = text; this.bar.value = text; this._paintRefs(text);
     ed.focus({ preventScroll: true });
     const n = text.length; ed.setSelectionRange(n, n);
   }
@@ -656,7 +698,7 @@ export class SheetGrid {
   }
   _commitEdit(move) {
     const e = this.edit; if (!e) return;
-    this.edit = null; this._pointReset();
+    this.edit = null; this._pointReset(); this._paintRefs('');
     const text = this.ed.value;
     this.ed.style.display = 'none';
     if (text !== e.orig) this._applyText(e.r, e.c, text);
@@ -664,7 +706,7 @@ export class SheetGrid {
     this._updateBar();
     if (move) this._move(move.dr, move.dc);
   }
-  _cancelEdit() { if (!this.edit) return; this.edit = null; this._pointReset(); this.ed.style.display = 'none'; this._focusKb(); this._updateBar(); }
+  _cancelEdit() { if (!this.edit) return; this.edit = null; this._pointReset(); this._paintRefs(''); this.ed.style.display = 'none'; this._focusKb(); this._updateBar(); }
   _commitBar() {
     if (this.opts.readOnly || !this.barDirty || !this.sh) { this.barDirty = false; return; }
     this.barDirty = false;

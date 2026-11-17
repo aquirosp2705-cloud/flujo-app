@@ -9,7 +9,7 @@
  * Táctil: tocar = seleccionar, tocar de nuevo = editar; barra de herramientas con deshacer, copiar, pegar, rellenar, zoom, ir al final.
  */
 import { cellKey as K, colLetter, addrToA1 } from './engine.js';
-import { fmtCell, styleCss, editText, parseInput } from './format.js';
+import { fmtCell, styleCss, editText, parseInput, isDateFormat } from './format.js';
 
 const ROW_H = 22, DEF_W = 64, ROWHDR_W = 46, COLHDR_H = 22, MAX_OVERFLOW = 700;
 const EMPTY = {};
@@ -624,8 +624,36 @@ export class SheetGrid {
     if (raw === cur) return;
     let changes;
     try { changes = eng.set(sid, r, c, raw); } catch (err) { this._toast('No se pudo guardar: ' + err.message); return; }
-    if (nf && !st.nf) sh.setStyle(r, c, eng.deriveStyle(stId, { nf }));
+    const useNf = (!st.nf || st.nf === 'General') ? this._inferNf(r, c, raw, nf, text) : null;
+    if (useNf) sh.setStyle(r, c, eng.deriveStyle(stId, { nf: useNf }));
     this._afterChange(changes);
+  }
+  /**
+   * Formato de número para lo que se acaba de teclear en una celda SIN formato: el de la celda de arriba en la misma columna (la más cercana con contenido o con formato,
+   * hasta 60 filas) —igual que Excel al seguir una lista—, así las fechas quedan como fechas y los montos como dólares con centavos en las filas nuevas.
+   * Una fecha tecleada usa el formato de fecha de la columna; un número o una fórmula, el de números (dólares, decimales, %); con «$» tecleado y sin
+   * nada arriba se usa dólares con dos decimales.
+   */
+  _inferNf(r, c, raw, nfTyped, text) {
+    const isNum = typeof raw === 'number', isFormula = typeof raw === 'string' && raw[0] === '=';
+    if (isNum || isFormula) {
+      for (let k = r - 1; k >= 0 && k >= r - 60; k--) {
+        const v = this.eng.raw(this.sid, k, c);
+        const above = (this.eng.styles[this.sh.styleAt(k, c)] || EMPTY).nf;
+        const hasNf = !!above && above !== 'General' && above !== '@';
+        const blank = v === null || v === undefined || v === '';
+        if (blank && !hasNf) continue;                                           // fila en blanco y sin formato: se sigue buscando hacia arriba
+        if (hasNf) {                                                             // con contenido o con el formato ya puesto (filas preparadas)
+          const dateAbove = isDateFormat(above);
+          if (nfTyped) return dateAbove ? above : nfTyped;                      // fecha tecleada: formato de fecha de la columna
+          if (!dateAbove) return above;                                          // número o fórmula: formato numérico de la columna
+        }
+        break;                                                                   // la columna usa formato General: no se busca más lejos
+      }
+    }
+    if (nfTyped) return nfTyped;
+    if (isNum && /^[-+]?\s*\$/.test(String(text).trim())) return '$#,##0.00';      // «$12.5» sin nada arriba: dólares con centavos
+    return undefined;
   }
   _afterChange(changes) {
     this._relayoutIfGrown();
@@ -725,7 +753,8 @@ export class SheetGrid {
         const row = ln.split('\t').map((cell, j) => {
           const st = this.eng.styles[this.sh.styleAt(R.r0 + i, R.c0 + j)] || EMPTY;
           const p = parseInput(cell.trim() === '' ? '' : cell, st);
-          if (p.nf && !st.nf) styleFix.push([R.r0 + i, R.c0 + j, p.nf]);
+          const useNf = (!st.nf || st.nf === 'General') ? this._inferNf(R.r0 + i, R.c0 + j, p.raw, p.nf, cell) : null;
+          if (useNf) styleFix.push([R.r0 + i, R.c0 + j, useNf]);
           return p.raw;
         });
         matrix.push(row);

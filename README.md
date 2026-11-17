@@ -32,6 +32,8 @@ Tus datos siguen en GitHub. Al conectar, la app ofrece guardar el token en el ad
 
 **Cerrar Flujo** (menú lateral y Ajustes → Este dispositivo) guarda y sube lo pendiente y cierra la ventana. La app se abre en una sola ventana.
 
+**Formatos al anotar:** lo que tecleas en una celda sin formato toma el formato de la celda de arriba en esa columna (como Excel): las fechas quedan como fechas del estilo de la columna y los montos como dólares con centavos. Se guarda el valor completo; solo cambia cómo se muestra.
+
 En una hoja: toca una celda para seleccionarla, vuelve a tocar (o doble clic / F2) para editar. `Ctrl+Z` deshace, `Ctrl+D` rellena hacia abajo,
 el cuadrito azul de la esquina de la selección arrastra fórmulas, y la barra inferior muestra suma y promedio de lo seleccionado.
 

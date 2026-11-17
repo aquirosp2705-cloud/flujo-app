@@ -1,6 +1,7 @@
 /* format.js — formato de valores (SSF) y estilos de celda -> CSS.
  * Requiere vendor/ssf.js cargado antes (global `SSF`, ya con meses/días en español).
  */
+import { toEnglish } from './formula-es.js';
 
 const cssCache = new Map();
 
@@ -94,7 +95,7 @@ export function parseInput(text, st) {
   if (text === null || text === undefined) return { raw: null };
   let s = String(text);
   if (s === '') return { raw: null };
-  if (s[0] === '=') return { raw: s };
+  if (s[0] === '=') return { raw: toEnglish(s) };         // «=SUMAR.SI(A:A;"x";B:B)» se guarda como «=SUMIF(A:A,"x",B:B)»
   if (s[0] === "'") return { raw: s.slice(1) };
   const t = s.trim();
   if (/^(true|verdadero)$/i.test(t)) return { raw: true };
@@ -118,7 +119,7 @@ export function parseInput(text, st) {
     return { raw: serial, nf: (st && st.nf && isDateFormat(st.nf)) ? undefined : 'dd/mm/yyyy' };
   }
   // como en Excel, un «+» o «-» al principio que no es un número empieza una fórmula: «+H2050+E2051», «-A1», «+SUM(A1:A3)», «+5*2»
-  if (/^[+-]\s*(?:\(|\$?[A-Za-z]{1,3}\$?\d|[A-Za-z][A-Za-z0-9.]*\(|\d)/.test(t) && !/\d\s+\d/.test(t)) return { raw: '=' + t };
+  if (/^[+-]\s*(?:\(|\$?[A-Za-z]{1,3}\$?\d|[A-Za-z][A-Za-z0-9.]*\(|\d)/.test(t) && !/\d\s+\d/.test(t)) return { raw: toEnglish('=' + t) };
   return { raw: s };
 }
 

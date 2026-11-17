@@ -10,6 +10,7 @@
  */
 import { cellKey as K, colLetter, addrToA1 } from './engine.js';
 import { fmtCell, styleCss, editText, parseInput, isDateFormat } from './format.js';
+import { toSpanish } from './formula-es.js';
 
 const ROW_H = 22, DEF_W = 64, ROWHDR_W = 46, COLHDR_H = 22, MAX_OVERFLOW = 700;
 const EMPTY = {};
@@ -382,7 +383,7 @@ export class SheetGrid {
   _rawText(r, c) {
     const raw = this.eng.raw(this.sid, r, c);
     if (raw === null || raw === undefined) return '';
-    if (typeof raw === 'string') return raw;
+    if (typeof raw === 'string') return raw[0] === '=' && !this.sh.textCells.has(K(r, c)) ? toSpanish(raw) : raw;      // las fórmulas se muestran como en Excel en español (SUMAR.SI, «;»); un texto que empieza con «=» no
     if (typeof raw === 'number') return editText(raw, this.eng.styles[this.sh.styleAt(r, c)]);
     if (typeof raw === 'boolean') return raw ? 'TRUE' : 'FALSE';
     return String(raw);

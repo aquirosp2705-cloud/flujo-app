@@ -128,6 +128,11 @@ main#screens { min-height: 0; overflow: hidden; position: relative; display: fle
 .kpi .v { font-size: 26px; font-weight: 750; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
 .kpi .l { font-size: 13px; color: var(--muted); font-weight: 600; }
 .empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+.conn-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 8px 12px 0; padding: 10px 14px; border-radius: 10px; background: #b3261e; color: #fff; font-size: 14px; font-weight: 600; }
+.conn-banner[hidden] { display: none; }
+#app.route-hoja .conn-banner { display: none; }          /* en la hoja (pantalla completa) no tapa la cuadrícula: el indicador de arriba sigue avisando */
+.conn-banner .grow { flex: 1 1 220px; }
+.conn-banner button { min-height: 40px; padding: 6px 14px; border-radius: 8px; border: 0; background: #fff; color: #b3261e; font-weight: 700; cursor: pointer; }
 .banner { padding: 10px 14px; border-radius: 10px; background: #fff4d6; color: #5f4300; margin-bottom: 12px; font-size: 14px; }
 :root[data-theme="dark"] .banner, :root:not([data-theme="light"]) .banner { }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .banner { background: #3a2f10; color: #ffe29a; } }

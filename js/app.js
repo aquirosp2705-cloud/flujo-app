@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '17';
+const VERSION = '18';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -134,7 +134,7 @@ async function boot() {
     catch (e) { console.error(e); state.store = null; toast('No se pudo abrir el almacenamiento local: ' + e.message, { type: 'error', ms: 8000 }); }
   }
   const S = state.mods['sync-github'];
-  if (state.store && S) { try { state.sync = await S.GithubSync.fromStore(state.store); applyUrlConfig(); } catch (e) { console.warn('[sync] no disponible', e); } }
+  if (state.store && S) { try { state.sync = await S.GithubSync.fromStore(state.store); applyUrlConfig(); } catch (e) { console.warn('[sync] no disponible', e); state.syncLoadError = e; } }
   if (bundle && syncOn() && navigator.onLine) bundle = await preSync(bundle);     // trae lo que otro dispositivo haya guardado ANTES de armar el motor
   if (!bundle) bundle = await firstRun();
   if (state.store) {      // hojas que meta.json ya no lista (borradas desde otro dispositivo): se quitan también de este
@@ -422,8 +422,34 @@ async function updatePill() {
     }
   }
   pill.className = 'pill ' + cls; txt.textContent = t;
+  updateConnBanner();
 }
 setInterval(() => { if (state.engine) updatePill(); }, 5000);
+
+/**
+ * Aviso rojo arriba de todas las pantallas cuando este dispositivo NO está conectado a GitHub (o el token ya no sirve):
+ * así nunca se trabaja horas sin enterarse de que nada se está subiendo. Un botón lleva a Ajustes para conectar.
+ */
+let connShown = '';
+async function updateConnBanner() {
+  const box = $('#connBanner'); if (!box || !state.store) return;
+  let text = '';
+  if (state.syncLoadError) text = 'No pude leer la conexión con GitHub guardada en este dispositivo: tus cambios solo se guardan aquí. Vuelve a conectar en Ajustes (con tu código de conexión no hace falta crear otro token).';
+  else if (!syncOn()) {
+    let n = 0; try { const st = state.sync ? await state.sync.status() : null; n = (st && st.pendingCount) || 0; } catch (e) { /* sin dato */ }
+    text = 'Este dispositivo no está conectado a GitHub: lo que hagas solo se guarda aquí' + (n ? ' (' + n + (n === 1 ? ' hoja sin subir' : ' hojas sin subir') + ')' : '') + '. Conéctalo en Ajustes; con tu código de conexión no hace falta crear otro token.';
+  } else {
+    let st = null; try { st = await state.sync.status(); } catch (e) { /* sin dato */ }
+    const code = st && st.lastError && st.lastError.code;
+    if (code === 'BAD_TOKEN' || code === 'NO_PERMISSION' || code === 'FORBIDDEN') text = 'GitHub ya no acepta el token de este dispositivo (venció o se borró): nada se está subiendo. Pega tu código de conexión o un token nuevo en Ajustes.';
+  }
+  if (text === connShown) return;
+  connShown = text;
+  box.innerHTML = '';
+  box.hidden = !text;
+  if (text) box.append(el('span', { class: 'grow', text }), el('button', { type: 'button', text: 'Conectar ahora', onclick: () => ctx.navigate('ajustes') }));
+}
+setInterval(() => { if (state.engine) updateConnBanner(); }, 5000);
 
 /* ------------------------------------------------------------------ tema */
 function applyTheme() {

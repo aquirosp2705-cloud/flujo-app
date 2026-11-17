@@ -34,6 +34,8 @@ Tus datos siguen en GitHub. Al conectar, la app ofrece guardar el token en el ad
 
 **Fórmulas como en Excel:** un `+` o `-` al principio empieza una fórmula (`+H2050+E2051`); mientras la escribes, un clic en otra celda (o una flecha) inserta su dirección, arrastrar inserta un rango y Mayús+clic lo extiende. Otro clic seguido cambia la celda apuntada.
 
+**Conexión siempre a la vista:** si el dispositivo no está conectado a GitHub (o GitHub ya no acepta el token), sale un aviso rojo arriba con «Conectar ahora». Para reconectar sin crear otro token, pega tu código de conexión; si de verdad hace falta uno nuevo, Ajustes trae «Crear un token nuevo en GitHub», que abre el formulario ya lleno (solo falta elegir el repositorio flujo-datos).
+
 **Funciones en español:** escribe las fórmulas como en tu Excel en español: `=SUMAR.SI(C:C;A5;D:D)`, `=SI(A1>0;"sí";"no")`, `=BUSCARV(A1;B:C;2;FALSO)`, `=REDONDEAR(A1*1,15;2)`; sirven `;` o `,` entre argumentos, mayúsculas o minúsculas, y los nombres en inglés también. Al editar una celda la fórmula se muestra en español con `;`. Por dentro se guarda en inglés (`=SUMIF(C:C,A5,D:D)`, el mismo formato del archivo de Excel), así que la exportación a Excel y todas las demás fórmulas no cambian. Se traducen unas 200 funciones (`js/formula-es.js`); una que no esté en la tabla se escribe tal cual.
 
 **Formatos al anotar:** lo que tecleas en una celda sin formato toma el formato de la celda de arriba en esa columna (como Excel): las fechas quedan como fechas del estilo de la columna y los montos como dólares con centavos. Se guarda el valor completo; solo cambia cómo se muestra.

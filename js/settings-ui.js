@@ -63,7 +63,11 @@ const KIND = { pull: 'descarga', push: 'subida de cambios', initial: 'carga inic
 
 let uidCounter = 0;
 
+/** Formulario de GitHub para un token fine-grained ya lleno: nombre, 1 año, permiso Contents de lectura y escritura (el repositorio se elige a mano). */
+const NEW_TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new?name=FlujoWeb&description=Datos+de+Flujo&expires_in=365&contents=write&metadata=read';
+
 /** Solo el bloque «Ya tengo un código de conexión» (pantalla de primer uso, sin ninguna otra tarjeta de ajustes). */
+
 export function mountPairingJoin(containerEl, opts = {}) {
   const { code = null, pairingCode = null, ...rest } = opts || {};
   return mountSyncSettings(containerEl, { ...rest, pairingCode: pairingCode || code, only: 'join' });
@@ -238,7 +242,9 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
           h('label', { class: 'fx-label', for: tokenIn.id }, 'Token de acceso'),
           h('div', { class: 'fx-row' }, tokenIn, toggleBtn),
           h('span', { class: 'fx-hint', 'data-fx': 'token-hint' }),
-          useSavedBtn)),
+          useSavedBtn,
+          h('a', { class: 'fx-btn fx-btn--quiet', 'data-fx': 'new-token', href: NEW_TOKEN_URL, target: '_blank', rel: 'noopener noreferrer' }, 'Crear un token nuevo en GitHub (abre el formulario ya lleno)'),
+          h('span', { class: 'fx-hint' }, 'En GitHub solo falta elegir «Only select repositories» → flujo-datos y pulsar «Generate token». Antes de crear otro, prueba tu código de conexión: no necesita token nuevo.'))),
       h('p', { class: 'fx-note' },
         h('b', {}, 'Seguridad: '), 'el token se guarda solo en este dispositivo (en el almacenamiento del navegador) y únicamente se envía a GitHub. ',
         'No lo compartas ni lo pegues en otros sitios. Para conectar otro dispositivo no hace falta copiarlo: crea un código de conexión en uno que ya esté conectado («Usar en otro dispositivo»). ',

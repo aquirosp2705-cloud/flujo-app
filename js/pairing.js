@@ -275,6 +275,21 @@ function trimmedCandidates(input) {
  * @throws {PairingError} FORMAT · KEY · INVALID · UNSUPPORTED (ver el constructor)
  */
 export async function openCode(code, key) {
+  if (typeof code === 'string' && code.length <= MAX_INPUT && code.includes(PREFIX2)) {          // pegaron el acceso de la clave única
+    const RE2 = /FLUJO2\.[A-Za-z0-9_-]+/;
+    const cands = [];
+    const word = code.split(/\s+/).find((w) => w.includes(PREFIX2));                      // el acceso suelto, con texto alrededor
+    const m1 = word && RE2.exec(word);
+    if (m1) cands.push(m1[0]);
+    const m2 = RE2.exec(code.replace(/[\s​-‍⁠﻿]+/g, ''));              // partido en varias líneas
+    if (m2 && !cands.includes(m2[0])) cands.push(m2[0]);
+    let last = new PairingError('FORMAT', MSG2.garbled);
+    for (const c of cands) {
+      try { return await openPersonalCode(c, key); }
+      catch (e) { if (!(e instanceof PairingError) || (e.code !== 'FORMAT' && e.code !== 'KEY')) throw e; last = e; }
+    }
+    throw last;
+  }
   const first = extractCode(code);
   try { return await openText(first, key); }
   catch (e) {
@@ -286,6 +301,149 @@ export async function openCode(code, key) {
     }
     throw e;
   }
+}
+
+/* ------------------------------------------------------------------------------------------------ clave única (v22) */
+/*
+ * «Clave única»: la persona elige UNA clave y la escribe una vez en un dispositivo conectado; con ella se cifra la conexión
+ * y el resultado («FLUJO2.…») se publica con la app en acceso.json. En cualquier otro dispositivo basta escribir esa clave.
+ * Como acceso.json es PÚBLICO, la clave elegida debe ser larga (passwordProblem) y la derivación es más cara que la del
+ * código de conexión (2 000 000 rondas, guardadas en el propio código para poder subirlas en el futuro).
+ *
+ *   código2 = "FLUJO2." + base64url( iteraciones (4 bytes, big-endian) ‖ sal (16) ‖ iv (12) ‖ cifrado ‖ etiqueta (16) )
+ *   clave AES = PBKDF2-HMAC-SHA256( normalizePassword(clave), sal, iteraciones ) → 256 bits ; AES-256-GCM
+ *   AAD = «flujoweb-clave-unica-v2» ‖ iteraciones (4 bytes)        contenido: el mismo JSON {o, r, b, t, c} que FLUJO1
+ *   acceso.json = {"formato":"flujo-acceso-1","creado":ISO,"codigo":"FLUJO2.…"}
+ */
+const PREFIX2 = 'FLUJO2.';
+const AAD2 = new TextEncoder().encode('flujoweb-clave-unica-v2');
+export const PERSONAL_ITERATIONS = 2000000;
+const ITER2_MIN = 600000, ITER2_MAX = 10000000;
+export const PASSWORD_MIN = 12;
+const PASSWORD_MAX = 128;
+export const ACCESS_FORMAT = 'flujo-acceso-1';
+
+const MSG2 = {
+  empty: 'Escribe tu clave.',
+  wrong: 'Esa no es tu clave. Revísala (no importan mayúsculas, tildes ni espacios) y vuelve a intentarlo.',
+  garbled: 'El acceso publicado está dañado. Créalo de nuevo en el dispositivo donde ya usas Flujo.',
+  short: 'Muy corta: usa al menos ' + PASSWORD_MIN + ' letras o números. Lo mejor es una frase de 3 o 4 palabras que no tenga que ver contigo.',
+  long: 'Muy larga: usa como máximo ' + PASSWORD_MAX + ' caracteres.',
+  digits: 'Solo números es fácil de adivinar: usa palabras (por ejemplo una frase de 3 o 4 palabras).',
+  weak: 'Es demasiado fácil de adivinar (repite o sigue en orden los mismos caracteres). Usa una frase de 3 o 4 palabras.'
+};
+
+/** La clave tal como cuenta: sin tildes ni diacríticos («ñ»→«n»), en minúsculas y sin espacios ni caracteres invisibles. */
+export function normalizePassword(text) {
+  let s = String(text == null ? '' : text).normalize('NFKD').replace(/\p{M}+/gu, '');
+  s = s.toLowerCase();
+  return s.replace(/[\s­​-‍⁠﻿]+/gu, '');
+}
+
+/** null si la clave sirve como clave única; si no, el motivo (texto para la persona). */
+export function passwordProblem(text) {
+  const s = normalizePassword(text);
+  const chars = [...s];
+  if (!chars.length) return MSG2.empty;
+  if (chars.length < PASSWORD_MIN) return MSG2.short;
+  if (chars.length > PASSWORD_MAX) return MSG2.long;
+  if (/^\d+$/.test(s)) return MSG2.digits;
+  if (new Set(chars).size < 5) return MSG2.weak;
+  let seq = true;
+  for (let i = 1; i < chars.length && seq; i++) seq = Math.abs(chars[i].codePointAt(0) - chars[i - 1].codePointAt(0)) <= 1;
+  if (seq) return MSG2.weak;
+  return null;
+}
+
+const u32 = (n) => new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]);
+const concat = (...parts) => { const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; };
+
+async function derivePersonalKey(subtle, normalized, salt, iterations, usage) {
+  const material = await subtle.importKey('raw', new TextEncoder().encode(normalized), 'PBKDF2', false, ['deriveKey']);
+  return subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, material, { name: 'AES-GCM', length: 256 }, false, [usage]);
+}
+
+/** true si el texto es un acceso de clave única («FLUJO2.…»). */
+export function isPersonalCode(text) { return typeof text === 'string' && text.startsWith(PREFIX2); }
+
+/**
+ * Cifra la conexión con la clave única. La clave debe pasar passwordProblem (si no, lanza KEY con el motivo).
+ * @returns {Promise<string>} «FLUJO2.…»
+ */
+export async function createPersonalCode(cfg, password, { iterations = PERSONAL_ITERATIONS } = {}) {
+  const c = webcrypto();
+  const { owner, repo, branch, token } = cfg || {};
+  const bad = badField(owner, repo, branch, token, { owner: MSG.badOwner, repo: MSG.badRepo, branch: MSG.badBranch, token: MSG.badToken });
+  if (bad) throw new PairingError('INVALID', bad);
+  const problem = passwordProblem(password);
+  if (problem) throw new PairingError('KEY', problem);
+  const it = Math.floor(iterations);
+  if (!(it >= ITER2_MIN && it <= ITER2_MAX)) throw new PairingError('INVALID', 'Número de rondas fuera de rango.');
+  const salt = c.getRandomValues(new Uint8Array(SALT_BYTES));
+  const iv = c.getRandomValues(new Uint8Array(IV_BYTES));
+  const head = u32(it);
+  const aes = await derivePersonalKey(c.subtle, normalizePassword(password), salt, it, 'encrypt');
+  const plain = new TextEncoder().encode(JSON.stringify({ o: owner, r: repo, b: branch, t: token, c: new Date().toISOString() }));
+  let sealed;
+  try {
+    sealed = new Uint8Array(await c.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: concat(AAD2, head), tagLength: TAG_BYTES * 8 }, aes, plain));
+  } finally { wipe(plain); }
+  return PREFIX2 + toBase64url(concat(head, salt, iv, sealed));
+}
+
+/**
+ * Abre un acceso «FLUJO2.…» con la clave única.
+ * @returns {Promise<{owner:string, repo:string, branch:string, token:string, createdAt:string}>}
+ * @throws {PairingError} FORMAT (no es un acceso o está dañado) · KEY (clave vacía o equivocada) · INVALID · UNSUPPORTED
+ */
+export async function openPersonalCode(code, password) {
+  const c = webcrypto();
+  const text = typeof code === 'string' ? code.trim() : '';
+  if (!isPersonalCode(text) || text.length > MAX_INPUT) throw new PairingError('FORMAT', MSG2.garbled);
+  const body = text.slice(PREFIX2.length);
+  const bytes = fromBase64url(body);
+  if (!bytes || bytes.length < 4 + SALT_BYTES + IV_BYTES + TAG_BYTES + 1 || toBase64url(bytes) !== body) throw new PairingError('FORMAT', MSG2.garbled);
+  const it = ((bytes[0] << 24) >>> 0) + (bytes[1] << 16) + (bytes[2] << 8) + bytes[3];
+  if (!(it >= ITER2_MIN && it <= ITER2_MAX)) throw new PairingError('FORMAT', MSG2.garbled);
+  const pw = normalizePassword(password);
+  if (!pw) throw new PairingError('KEY', MSG2.empty);
+  const head = bytes.slice(0, 4);
+  const salt = bytes.slice(4, 4 + SALT_BYTES);
+  const iv = bytes.slice(4 + SALT_BYTES, 4 + SALT_BYTES + IV_BYTES);
+  const sealed = bytes.slice(4 + SALT_BYTES + IV_BYTES);
+  let plain;
+  try {
+    const aes = await derivePersonalKey(c.subtle, pw, salt, it, 'decrypt');
+    plain = new Uint8Array(await c.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: concat(AAD2, head), tagLength: TAG_BYTES * 8 }, aes, sealed));
+  } catch (_) {
+    throw new PairingError('KEY', MSG2.wrong);
+  }
+  let obj;
+  try { obj = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plain)); }
+  catch (_) { throw new PairingError('INVALID', MSG.invalidContent); }
+  finally { wipe(plain); }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new PairingError('INVALID', MSG.invalidContent);
+  const { o, r, b, t, c: created } = obj;
+  const bad = badField(o, r, b, t, { owner: MSG.invalidContent, repo: MSG.invalidContent, branch: MSG.invalidContent, token: MSG.invalidContent });
+  if (bad || typeof created !== 'string' || created.length > 40 || Number.isNaN(Date.parse(created))) throw new PairingError('INVALID', MSG.invalidContent);
+  return { owner: o, repo: r, branch: b, token: t, createdAt: new Date(created).toISOString() };
+}
+
+/** Texto de acceso.json para un código2 recién creado. */
+export function accessFileText(code, createdAt = new Date().toISOString()) {
+  return JSON.stringify({ formato: ACCESS_FORMAT, creado: createdAt, codigo: code }, null, 2) + '\n';
+}
+
+/** Lee acceso.json (texto u objeto ya parseado) → {code, createdAt}, o null si no es un acceso válido. Nunca lanza. */
+export function parseAccessFile(input) {
+  try {
+    const o = typeof input === 'string' ? JSON.parse(input) : input;
+    if (!o || typeof o !== 'object' || o.formato !== ACCESS_FORMAT) return null;
+    const code = typeof o.codigo === 'string' ? o.codigo.trim() : '';
+    if (!isPersonalCode(code) || code.length > MAX_INPUT || !/^FLUJO2\.[A-Za-z0-9_-]+$/.test(code)) return null;
+    const createdAt = typeof o.creado === 'string' && o.creado.length <= 40 && !Number.isNaN(Date.parse(o.creado)) ? new Date(o.creado).toISOString() : null;
+    return { code, createdAt };
+  } catch (_) { return null; }
 }
 
 /* ------------------------------------------------------------------------------------------------ enlaces */

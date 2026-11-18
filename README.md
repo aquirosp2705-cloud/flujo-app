@@ -116,6 +116,21 @@ Al editar una celda con fórmula (doble clic, F2, Enter o en la barra de fórmul
 que usa la fórmula se enciende con un recuadro de color (como Excel). Se actualiza al escribir y se apaga al terminar.
 Las referencias a otras hojas no se marcan.
 
+## Clave única para los otros dispositivos (v22)
+
+En el computador donde Flujo ya está conectado: **Ajustes → «Clave única para tus otros dispositivos»**, escribe tu clave
+dos veces y pulsa «Crear acceso con mi clave». Se descarga `acceso.json`: la conexión con GitHub cifrada con esa clave
+(PBKDF2-SHA256 de 2 000 000 rondas + AES-256-GCM, formato «FLUJO2.…» en `js/pairing.js`). Ese archivo se publica junto
+con la app (`tools/publish.py` lo incluye y comprueba que tenga exactamente la forma esperada y que nada lleve un token en
+claro). Desde entonces, en el iPhone, el iPad o cualquier otro dispositivo, la pantalla de primer uso pide **solo la clave**:
+la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No importan mayúsculas, tildes ni espacios.
+
+- La clave nunca sale del dispositivo donde se escribe; `acceso.json` es público, por eso se exige una clave larga
+  (mínimo 12 caracteres; mejor una frase de 3 o 4 palabras que no tenga que ver con la persona).
+- Si el token de GitHub vence o se cambia, hay que crear la clave única de nuevo y volver a publicar `acceso.json`.
+- El código de conexión de siempre sigue disponible («¿Tienes un código de conexión? Úsalo aquí»).
+- Pruebas: `_e2e/clave_unica_e2e.py` (32) y `_e2e/ios_reabrir_e2e.py` (10: conectar en la app del ícono, cerrar y abrir).
+
 ## Excel con formato (v21)
 «Descargar Excel» (y el Excel de un mes archivado) sale con negrita, cursiva, subrayado, tachado, tamaño y color de
 letra, relleno, bordes, alineación, ajuste de texto y sangría, además de los formatos de número. SheetJS Community no

@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '21';
+const VERSION = '22';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -194,7 +194,7 @@ function showOnboarding(resolve) {
   const gh = el('div', { class: 'card', style: { textAlign: 'left', marginTop: '14px' } });
   const joinHost = el('div', { style: { textAlign: 'left', marginTop: '14px' } });     // «Ya tengo un código de conexión»: la opción principal
   extra.append(...[
-    iosHelp ? el('div', { class: 'banner', style: { textAlign: 'left', marginTop: '14px' }, text: 'En iPhone: primero toca Compartir y «Añadir a pantalla de inicio», abre Flujo desde su ícono y recién ahí conecta con el código. Si conectas aquí y luego la instalas, la app instalada empezará vacía.' }) : null,
+    iosHelp ? el('div', { class: 'banner', style: { textAlign: 'left', marginTop: '14px' }, text: 'En iPhone o iPad: mejor toca Compartir → «Añadir a pantalla de inicio» y abre Flujo desde su ícono (Safari borra los datos de las páginas que no están instaladas). Si entras aquí y luego la instalas, la app del ícono empieza vacía: ahí vuelves a escribir tu clave.' }) : null,
     el('p', { class: 'muted small', style: { textAlign: 'left', margin: '14px 0 0' }, text: 'Si ya usabas Flujo en este navegador y ves esta pantalla, es posible que el navegador haya borrado los datos de la app. Tus datos siguen a salvo en GitHub: conecta tu cuenta y se recuperan.' }),
     canSync ? joinHost : null,
     canSync ? el('p', { class: 'muted small', style: { margin: '18px 0 0' }, text: '¿No tienes un código? Hay otras formas de traer tus datos (con más pasos):' }) : null,
@@ -434,14 +434,14 @@ let connShown = '';
 async function updateConnBanner() {
   const box = $('#connBanner'); if (!box || !state.store) return;
   let text = '';
-  if (state.syncLoadError) text = 'No pude leer la conexión con GitHub guardada en este dispositivo: tus cambios solo se guardan aquí. Vuelve a conectar en Ajustes (con tu código de conexión no hace falta crear otro token).';
+  if (state.syncLoadError) text = 'No pude leer la conexión con GitHub guardada en este dispositivo: tus cambios solo se guardan aquí. Vuelve a conectar en Ajustes con tu clave única o un código de conexión (no hace falta crear otro token).';
   else if (!syncOn()) {
     let n = 0; try { const st = state.sync ? await state.sync.status() : null; n = (st && st.pendingCount) || 0; } catch (e) { /* sin dato */ }
-    text = 'Este dispositivo no está conectado a GitHub: lo que hagas solo se guarda aquí' + (n ? ' (' + n + (n === 1 ? ' hoja sin subir' : ' hojas sin subir') + ')' : '') + '. Conéctalo en Ajustes; con tu código de conexión no hace falta crear otro token.';
+    text = 'Este dispositivo no está conectado a GitHub: lo que hagas solo se guarda aquí' + (n ? ' (' + n + (n === 1 ? ' hoja sin subir' : ' hojas sin subir') + ')' : '') + '. Conéctalo en Ajustes con tu clave única o un código de conexión (no hace falta crear otro token).';
   } else {
     let st = null; try { st = await state.sync.status(); } catch (e) { /* sin dato */ }
     const code = st && st.lastError && st.lastError.code;
-    if (code === 'BAD_TOKEN' || code === 'NO_PERMISSION' || code === 'FORBIDDEN') text = 'GitHub ya no acepta el token de este dispositivo (venció o se borró): nada se está subiendo. Pega tu código de conexión o un token nuevo en Ajustes.';
+    if (code === 'BAD_TOKEN' || code === 'NO_PERMISSION' || code === 'FORBIDDEN') text = 'GitHub ya no acepta el token de este dispositivo (venció o se borró): nada se está subiendo. En Ajustes entra con tu clave única, un código de conexión o un token nuevo.';
   }
   if (text === connShown) return;
   connShown = text;

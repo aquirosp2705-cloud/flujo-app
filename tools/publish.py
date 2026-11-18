@@ -16,7 +16,7 @@ import argparse, json, os, re, shutil, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-APP_ALLOW = ['index.html', 'manifest.webmanifest', 'sw.js', 'LICENSE', 'README.md', '.nojekyll']
+APP_ALLOW = ['index.html', 'manifest.webmanifest', 'sw.js', 'LICENSE', 'README.md', '.nojekyll', 'acceso.json']
 APP_DIRS = ['css', 'js', 'vendor', 'icons']
 APP_TOOLS = ['tools/convert.py', 'tools/drop_sheets.py', 'tools/publish.py']
 SKIP_NAMES = {'__pycache__', '.DS_Store', 'Thumbs.db'}
@@ -99,6 +99,20 @@ def privacy_scan(stage):
             try:
                 text = open(p, encoding='utf8').read()
             except Exception:
+                continue
+            if re.search(r'(github_pat_|gh[pousr]_)[A-Za-z0-9_]{20,}', text):
+                hits.append((rel, 'parece un TOKEN de GitHub en claro'))
+                continue
+            if rel == 'acceso.json':          # clave única: SOLO el acceso cifrado, con forma exacta (el cuerpo es azar: no se busca texto en él)
+                try:
+                    acc = json.loads(text)
+                    ok = bool(isinstance(acc, dict) and set(acc) == {'formato', 'creado', 'codigo'} and acc['formato'] == 'flujo-acceso-1'
+                              and isinstance(acc['creado'], str) and len(acc['creado']) <= 40
+                              and isinstance(acc['codigo'], str) and re.fullmatch(r'FLUJO2\.[A-Za-z0-9_-]{60,1990}', acc['codigo']))
+                except Exception:
+                    ok = False
+                if not ok:
+                    hits.append((rel, 'acceso.json no tiene la forma esperada {formato, creado, codigo:"FLUJO2.…"}'))
                 continue
             low = text.lower()
             for t in terms:

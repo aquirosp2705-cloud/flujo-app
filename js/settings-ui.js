@@ -24,7 +24,24 @@
 
 import { AutoSaver, StoreError, Store, KV } from './store.js';
 import { GithubError, GithubSync } from './sync-github.js';
-import { PairingError, newKey, formatKey, createCode, openCode, linkFor } from './pairing.js';
+import { PairingError, newKey, formatKey, createCode, openCode, linkFor,
+  createPersonalCode, openPersonalCode, passwordProblem, normalizePassword, accessFileText, parseAccessFile } from './pairing.js';
+
+/** acceso.json publicado con la app (clave única, v22): {code, createdAt} o null si no hay, no hay internet o no es válido. Nunca lanza. */
+const ACCESS_URL = new URL('../acceso.json', import.meta.url).href;
+export async function fetchAccess() {
+  try {
+    const r = await fetch(ACCESS_URL, { cache: 'no-cache' });
+    if (!r.ok) return null;
+    return parseAccessFile(await r.text());
+  } catch (_) { return null; }
+}
+/** Huella del último acceso creado en este dispositivo (para saber si ya está publicado). Clave «_…»: fuera de los respaldos. */
+const CU_KEY = '_claveUnica';
+async function sha256Hex(text) {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 /** recover.js (token guardado en el administrador de contraseñas del navegador) se carga solo cuando hace falta; si falla, la conexión con GitHub sigue igual. */
 let recoverPromise = null;
@@ -199,7 +216,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
 
   // pegar
   const codeIn = h('textarea', { class: 'fx-input fx-input--code', id: uid + '-pair-code', rows: '3', autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', placeholder: 'FLUJO1.…', 'data-fx': 'join-code' });
-  const keyIn = h('input', { class: 'fx-input fx-input--key', id: uid + '-pair-key', type: 'text', name: 'fx-pair-key', autocomplete: 'off', autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go', maxlength: '30', placeholder: 'XXXX-XXXX-XXXX', 'data-fx': 'join-key' });
+  const keyIn = h('input', { class: 'fx-input fx-input--key', id: uid + '-pair-key', type: 'text', name: 'fx-pair-key', autocomplete: 'off', autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go', maxlength: '200', placeholder: 'XXXX-XXXX-XXXX', 'data-fx': 'join-key' });
   const joinBtn = btn('Conectar este dispositivo', 'fx-btn--primary', () => run(doJoin, joinSlot), { 'data-fx': 'join-go' });
   for (const i of [codeIn, keyIn]) i.addEventListener('input', () => { if (msgBox.parentNode === joinSlot) clearMsg(); });
   keyIn.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); if (!busy) joinBtn.click(); } });
@@ -218,12 +235,80 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     input.setAttribute('aria-describedby', hint.id);
   }
   const joinForm = h('div', { class: 'fx-join__form' }, codeField, keyField, h('div', { class: 'fx-actions' }, joinBtn));
+
+  // entrar con la clave única (v22): solo si la app publicada trae acceso.json; entonces el bloque del código queda plegado
+  let access = null;                 // {code, createdAt} del acceso.json publicado
+  let codeOpen = false;
+  const toggleShow = (inputs, b) => {
+    const show = inputs[0].type === 'password';
+    for (const i of inputs) i.type = show ? 'text' : 'password';
+    b.textContent = show ? 'Ocultar' : 'Mostrar';
+    b.setAttribute('aria-pressed', String(show));
+  };
+  const accUser = h('input', { class: 'fx-file', type: 'text', name: 'username', autocomplete: 'username', value: 'Flujo', readonly: true, tabindex: '-1', 'aria-hidden': 'true' });   // para que el llavero del teléfono guarde «Flujo» + la clave
+  const accIn = h('input', { class: 'fx-input fx-input--key', id: uid + '-acc', type: 'password', name: 'password', autocomplete: 'current-password', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'go', maxlength: '200', 'data-fx': 'acc-pass' });
+  const accShow = btn('Mostrar', 'fx-btn--small', () => toggleShow([accIn], accShow), { 'aria-pressed': 'false', 'data-fx': 'acc-show' });
+  const accBtn = btn('Entrar', 'fx-btn--primary', () => run(doAccess, joinSlot), { 'data-fx': 'acc-go' });
+  accIn.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !ev.isComposing) { ev.preventDefault(); if (!busy) accBtn.click(); } });
+  accIn.addEventListener('input', () => { if (msgBox.parentNode === joinSlot) clearMsg(); });
+  const accForm = h('form', { class: 'fx-acc', 'data-fx': 'acc', hidden: true, novalidate: true, autocomplete: 'on' },
+    accUser,
+    h('p', { class: 'fx-pair__lead' }, 'Escribe tu clave única (la que creaste en el computador donde usas Flujo). Flujo se conecta y trae tus datos: no necesitas ningún código.'),
+    h('div', { class: 'fx-field' },
+      h('label', { class: 'fx-label', for: accIn.id }, 'Tu clave'),
+      h('div', { class: 'fx-row' }, accIn, accShow),
+      h('span', { class: 'fx-hint' }, 'No importan mayúsculas, tildes ni espacios.')),
+    h('div', { class: 'fx-actions' }, accBtn));
+  accForm.addEventListener('submit', (ev) => { ev.preventDefault(); if (!busy) accBtn.click(); });
+  const codeToggle = h('button', { class: 'fx-link', type: 'button', 'aria-expanded': 'false', 'data-fx': 'code-toggle', text: '¿Tienes un código de conexión? Úsalo aquí' });
+  codeToggle.addEventListener('click', () => { codeOpen = !codeOpen; layoutJoin(); if (codeOpen) codeIn.focus(); });
+  const codeToggleRow = h('p', { class: 'fx-pair__alt', hidden: true }, codeToggle);
+  const codeLead = h('p', { class: 'fx-pair__lead' }, 'Si ya usas Flujo en otro celular o computador: allí abre Ajustes → «Usar en otro dispositivo» y pulsa «Crear código de conexión»; envíate el código por WhatsApp o correo, pégalo aquí y escribe la clave que se ve en esa pantalla. No tienes que volver a entrar a GitHub.');
+  const joinTitle = h(joinOnly ? 'h2' : 'h3', { class: 'fx-h3' }, 'Ya tengo un código de conexión');         // en la pantalla de primer uso es el título principal
   const joinBox = h('div', { class: 'fx-join', id: uid + '-join', 'data-fx': 'join' },
-    h(joinOnly ? 'h2' : 'h3', { class: 'fx-h3' }, 'Ya tengo un código de conexión'),         // en la pantalla de primer uso es el título principal
-    h('p', { class: 'fx-pair__lead' }, 'Si ya usas Flujo en otro celular o computador: allí abre Ajustes → «Usar en otro dispositivo» y pulsa «Crear código de conexión»; envíate el código por WhatsApp o correo, pégalo aquí y escribe la clave que se ve en esa pantalla. No tienes que volver a entrar a GitHub.'),
-    joinForm, confirmBox, joinSlot);
-  const pairCard = withPairing ? h('div', { class: 'fx-card fx-pair', 'data-fx': 'pair-card' }, createBox, joinBox) : null;
-  actionBtns.push(createBtn, joinBtn, yesBtn, noBtn, pasteLink);
+    joinTitle, accForm, codeToggleRow, codeLead, joinForm, confirmBox, joinSlot);
+  /** Con acceso publicado: «Entrar con tu clave» arriba y el código plegado; sin él, el bloque de siempre. */
+  function layoutJoin() {
+    const withAccess = !!access, confirming = !confirmBox.hidden;
+    joinTitle.textContent = withAccess ? 'Entrar con tu clave' : 'Ya tengo un código de conexión';
+    accForm.hidden = !withAccess || confirming;
+    codeToggleRow.hidden = !withAccess || confirming;
+    codeToggle.setAttribute('aria-expanded', String(codeOpen));
+    const showCode = (!withAccess || codeOpen) && !confirming;
+    codeLead.hidden = !showCode;
+    joinForm.hidden = !showCode;
+  }
+
+  // clave única en un dispositivo conectado: cifra la conexión con la clave elegida y descarga acceso.json para publicarlo con la app
+  let cuIssued = null;               // texto de acceso.json recién creado: solo en memoria mientras la tarjeta esté abierta
+  const cuStatus = h('p', { class: 'fx-note', 'data-fx': 'cu-status' }, 'Comprobando si ya hay una clave única publicada…');
+  const cuPass1 = h('input', { class: 'fx-input', id: uid + '-cu1', type: 'password', name: 'new-password', autocomplete: 'new-password', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', maxlength: '200', 'data-fx': 'cu-pass1' });
+  const cuPass2 = h('input', { class: 'fx-input', id: uid + '-cu2', type: 'password', autocomplete: 'new-password', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', maxlength: '200', 'data-fx': 'cu-pass2' });
+  const cuShow = btn('Mostrar', 'fx-btn--small', () => toggleShow([cuPass1, cuPass2], cuShow), { 'aria-pressed': 'false', 'data-fx': 'cu-show' });
+  const cuCreateBtn = btn('Crear acceso con mi clave', 'fx-btn--primary', () => run(doCreateAccess, cuSlot), { 'data-fx': 'cu-create' });
+  const cuSlot = h('div', { class: 'fx-slot' });
+  const cuText = h('textarea', { class: 'fx-input fx-input--code', id: uid + '-cu-out', readonly: true, rows: '5', spellcheck: 'false', 'data-fx': 'cu-file' });
+  const cuDownBtn = btn('Descargar acceso.json', 'fx-btn--primary', () => downloadAccess(), { 'data-fx': 'cu-download' });
+  const cuCopyBtn = btn('Copiar', '', () => copyAccess(), { 'data-fx': 'cu-copy' });
+  const cuOut = h('div', { class: 'fx-pair__out', hidden: true, 'data-fx': 'cu-out' },
+    h('label', { class: 'fx-label', for: cuText.id }, 'acceso.json (va cifrado: sin tu clave no sirve)'), cuText,
+    h('div', { class: 'fx-actions' }, cuDownBtn, cuCopyBtn),
+    h('p', { class: 'fx-note' }, 'Para activarla, este archivo se publica junto con la app (acceso.json). Desde ese momento, en el iPhone, el iPad u otro dispositivo Flujo pide solo tu clave.'));
+  const cuBox = joinOnly ? null : h('div', { class: 'fx-create fx-cu', 'data-fx': 'cu' },
+    h('h3', { class: 'fx-h3' }, 'Clave única para tus otros dispositivos'),
+    h('p', { class: 'fx-pair__lead' }, 'Elige una clave y escríbela aquí una sola vez. Con ella entras desde el iPhone, el iPad o cualquier otro dispositivo: sin códigos ni tokens. Si algún día el teléfono borra los datos, escribes la misma clave y listo.'),
+    cuStatus,
+    h('div', { class: 'fx-field' },
+      h('label', { class: 'fx-label', for: cuPass1.id }, 'Tu clave'),
+      h('div', { class: 'fx-row' }, cuPass1, cuShow),
+      h('span', { class: 'fx-hint' }, 'Mínimo 12 letras o números. Lo mejor: una frase de 3 o 4 palabras que no tenga que ver contigo (ni tu nombre ni fechas): el acceso se publica cifrado y solo tu clave lo abre. No importan mayúsculas, tildes ni espacios.')),
+    field('Repítela', cuPass2),
+    h('div', { class: 'fx-actions' }, cuCreateBtn),
+    cuSlot,
+    cuOut);
+
+  const pairCard = withPairing ? h('div', { class: 'fx-card fx-pair', 'data-fx': 'pair-card' }, createBox, cuBox, joinBox) : null;
+  actionBtns.push(createBtn, joinBtn, yesBtn, noBtn, pasteLink, accBtn, codeToggle, cuCreateBtn);
 
   const root = joinOnly ? h('section', { class: 'fx-sync fx-sync--join', 'aria-label': 'Conectar con un código' }, pairCard) : h('section', { class: 'fx-sync', 'aria-labelledby': uid + '-title' },
     h('h2', { class: 'fx-title', id: uid + '-title' }, 'Sincronización con GitHub'),
@@ -528,6 +613,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     if (!pairCard) return;
     const connected = !joinOnly && sync.isConfigured();
     if (createBox) createBox.hidden = !connected;
+    if (cuBox) cuBox.hidden = !connected;
     joinBox.classList.toggle('fx-join--below', connected);
     joinBox.hidden = connected ? !joinOpen : false;
     pasteLink.setAttribute('aria-expanded', String(connected && joinOpen));
@@ -606,7 +692,101 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     if (pending) pending.token = '';
     pending = null;
     confirmBox.hidden = true;
-    joinForm.hidden = false;
+    layoutJoin();
+  }
+
+  /* ------------------------------------------------------------ clave única */
+  /** Entrar con la clave única: abre el acceso publicado; en un dispositivo nuevo conecta y baja todo sin más preguntas. */
+  async function doAccess() {
+    if (!access) return;
+    const pw = accIn.value;
+    if (!normalizePassword(pw)) { say('warn', 'Escribe tu clave.'); accIn.focus(); return; }
+    onProgress({ message: 'Comprobando tu clave (unos segundos)…' });
+    let opened;
+    try { opened = await openPersonalCode(access.code, pw); }
+    catch (e) {
+      say('error', explain(e));
+      if (e instanceof PairingError && e.code === 'KEY') { accIn.focus(); try { accIn.select(); } catch (_) { /* nada */ } }
+      return;
+    }
+    accIn.value = '';
+    if (accIn.type !== 'password') toggleShow([accIn], accShow);
+    opened.via = 'clave';
+    let nSheets = 0;
+    try { nSheets = (await store.listSheetIds()).length; } catch (_) { /* sin dato */ }
+    if (!sync.isConfigured() && nSheets === 0) { pending = opened; await doJoinConfirmed(); return; }     // dispositivo nuevo: nada que perder
+    await askConfirm(opened);            // ya tiene hojas o conexión: primero se muestra qué pasará
+  }
+
+  /** Crea acceso.json: comprueba que la conexión de este dispositivo funciona, cifra con la clave, lo verifica y lo descarga. */
+  async function doCreateAccess() {
+    const p1 = cuPass1.value, p2 = cuPass2.value;
+    const problem = passwordProblem(p1);
+    if (problem) { say('warn', problem); cuPass1.focus(); return; }
+    if (normalizePassword(p1) !== normalizePassword(p2)) { say('warn', 'Las dos claves no coinciden. Escríbelas otra vez.'); cuPass2.focus(); return; }
+    const saved = await store.getSetting(KV.GITHUB, null);
+    if (!saved || !saved.owner || !saved.repo || !saved.token) {
+      say('warn', 'Este dispositivo todavía no tiene la conexión guardada: conéctalo primero y vuelve a intentarlo.');
+      return;
+    }
+    onProgress({ message: 'Comprobando que la conexión de este dispositivo funciona…' });
+    const probe = await sync.testConnection();
+    if (!probe.ok) {
+      say('error', 'La conexión de este dispositivo no funciona ahora: ' + probe.message + ' Arréglala antes de crear la clave única (el acceso llevaría un permiso que no sirve).');
+      return;
+    }
+    onProgress({ message: 'Cifrando con tu clave (unos segundos)…' });
+    const cfg = { owner: saved.owner, repo: saved.repo, branch: saved.branch || 'main', token: saved.token };
+    const code = await createPersonalCode(cfg, p1);
+    const back = await openPersonalCode(code, p2);                 // comprobación: se abre con la misma clave y trae la misma conexión
+    const same = back.token === cfg.token && back.owner === cfg.owner && back.repo === cfg.repo && back.branch === cfg.branch;
+    back.token = ''; cfg.token = '';
+    if (!same) throw new Error('la comprobación del acceso no coincide; vuelve a intentarlo');
+    const createdAt = new Date().toISOString();
+    cuIssued = accessFileText(code, createdAt);
+    cuPass1.value = ''; cuPass2.value = '';
+    if (cuPass1.type !== 'password') toggleShow([cuPass1, cuPass2], cuShow);
+    cuText.value = cuIssued;
+    cuOut.hidden = false;
+    try { await store.setSetting(CU_KEY, { hash: await sha256Hex(code), at: createdAt }); } catch (_) { /* solo informativo */ }
+    downloadAccess();
+    say('ok', 'Listo: se descargó «acceso.json» (va cifrado con tu clave). Para activarla hay que publicarlo junto con la app; desde entonces, en los otros dispositivos Flujo pide solo tu clave.');
+    refreshCu();
+  }
+
+  function downloadAccess() {
+    if (!cuIssued) return;
+    const url = URL.createObjectURL(new Blob([cuIssued], { type: 'application/json' }));
+    const a = h('a', { href: url, download: 'acceso.json', hidden: true });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+  }
+
+  async function copyAccess() {
+    if (!cuIssued) return;
+    if (await copyText(cuIssued)) sayAt(cuSlot, 'ok', 'Copiado.');
+    else { cuText.focus(); cuText.select(); sayAt(cuSlot, 'warn', 'No se pudo copiar solo: el texto quedó seleccionado; cópialo tú.'); }
+  }
+
+  /** Estado de la clave única en un dispositivo conectado: publicada, pendiente de publicar o sin crear. */
+  async function refreshCu() {
+    if (!cuBox || destroyed) return;
+    let local = null;
+    try { local = await store.getSetting(CU_KEY, null); } catch (_) { /* sin dato */ }
+    if (!access) {
+      cuStatus.textContent = local && local.at
+        ? 'Creaste una clave única el ' + fmtDate(local.at) + ', pero todavía no está publicada: los otros dispositivos aún no la piden.'
+        : 'Todavía no tienes clave única.';
+      return;
+    }
+    let pub = '';
+    try { pub = await sha256Hex(access.code); } catch (_) { /* sin huella */ }
+    const when = access.createdAt ? ' (publicada el ' + fmtDate(access.createdAt) + ')' : '';
+    cuStatus.textContent = local && local.hash && pub && local.hash !== pub
+      ? 'Hay una clave única publicada' + when + ', pero el ' + fmtDate(local.at) + ' creaste otra que todavía no está publicada: hasta publicarla sigue valiendo la anterior.'
+      : 'Activa' + when + ': en tus otros dispositivos Flujo pide solo tu clave. Si cambias el token de GitHub o quieres otra clave, créala de nuevo aquí.';
   }
 
   /** Paso 1: abre el código con la clave y MUESTRA a qué cuenta y repositorio llevaría. Todavía no cambia nada. */
@@ -622,7 +802,13 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
       if (e instanceof PairingError) { if (e.code === 'KEY') { keyIn.focus(); try { keyIn.select(); } catch (_) { /* nada */ } } else codeIn.focus(); }
       return;
     }
+    await askConfirm(opened);
+  }
+
+  /** Muestra a qué cuenta y repositorio llevaría la conexión abierta (código o clave única) y qué pasará; todavía no cambia nada. */
+  async function askConfirm(opened) {
     pending = opened;
+    const viaClave = opened.via === 'clave';
     const cur = sync.getConfig();
     const lc = (s) => String(s || '').toLowerCase();
     const when = ago(opened.createdAt);
@@ -633,15 +819,16 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     const sameRepo = connected && lc(cur.owner) === lc(opened.owner) && lc(cur.repo) === lc(opened.repo);
     const otherAccount = connected && lc(cur.owner) !== lc(opened.owner);
     confirmQ.replaceChildren('Conectar con ', h('b', {}, label));
-    confirmInfo.textContent = (opened.branch && opened.branch !== 'main' ? 'Rama «' + opened.branch + '». ' : '') + 'Código creado el ' + fmtDate(opened.createdAt) + (when ? ' (' + when + ')' : '') + '.';
-    const warn = ['Sigue solo si reconoces esta cuenta de GitHub. Si alguien más te envió este código, tus datos podrían terminar en la cuenta de esa persona.'];
+    confirmInfo.textContent = (opened.branch && opened.branch !== 'main' ? 'Rama «' + opened.branch + '». ' : '') + (viaClave ? 'Acceso de tu clave única creado el ' : 'Código creado el ') + fmtDate(opened.createdAt) + (when ? ' (' + when + ')' : '') + '.';
+    const warn = viaClave ? [] : ['Sigue solo si reconoces esta cuenta de GitHub. Si alguien más te envió este código, tus datos podrían terminar en la cuenta de esa persona.'];
     if (otherAccount) warn.unshift('¡Es OTRA cuenta distinta de la que usas ahora (' + cur.owner + ')! Este dispositivo tiene ' + plural(nSheets, 'hoja', 'hojas') + ' y al conectar se subirán TODAS a ' + label + '.');
     else if (connected && !sameRepo) warn.push('Este dispositivo está conectado ahora con ' + cur.owner + '/' + cur.repo + ': esa conexión se reemplazará.');
     if (!connected && nSheets > 0) warn.push('Este dispositivo ya tiene ' + plural(nSheets, 'hoja', 'hojas') + '. Las que existan en ' + label + ' se reemplazarán por las de allí y las que no estén allí se borrarán de aquí. Antes descarga un respaldo (Ajustes → «Descargar respaldo»).');
     confirmWarn.textContent = warn.join(' ');
+    confirmWarn.hidden = !warn.length;
     yesBtn.textContent = otherAccount ? 'Sí, cambiar a esta cuenta' : 'Sí, es mi cuenta: conectar';
-    joinForm.hidden = true;
     confirmBox.hidden = false;
+    layoutJoin();
     confirmBox.focus();
   }
 
@@ -650,6 +837,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     const p = pending;
     if (!p) { showJoinForm(); return; }
     const { owner, repo, branch, token } = p;        // copia local: la pantalla puede cerrarse mientras se prueba la conexión y vaciar «pending»
+    const viaClave = p.via === 'clave';
     const label = owner + '/' + repo;
     yesBtn.textContent = 'Conectando…';
     let probe;
@@ -659,8 +847,10 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     } catch (e) { say('error', explain(e)); showJoinForm(); return; }
     if (!probe.ok) {
       let text = probe.message, details = null;
-      if (probe.code === 'BAD_TOKEN') text = 'Este código ya no sirve: el permiso de acceso que trae venció o fue cancelado en GitHub. Crea un código nuevo en el dispositivo donde ya usas Flujo.';
-      else if (probe.code === 'NOT_FOUND') text = 'No se encontró «' + label + '», o el permiso del código ya no llega hasta él. Crea un código nuevo en el dispositivo donde ya usas Flujo.';
+      if (probe.code === 'BAD_TOKEN') text = viaClave
+        ? 'Tu clave es correcta, pero el acceso publicado ya no sirve: el token de GitHub venció o se cambió. En el computador donde usas Flujo entra a Ajustes → «Clave única para tus otros dispositivos», créala de nuevo y publica el acceso nuevo.'
+        : 'Este código ya no sirve: el permiso de acceso que trae venció o fue cancelado en GitHub. Crea un código nuevo en el dispositivo donde ya usas Flujo.';
+      else if (probe.code === 'NOT_FOUND') text = 'No se encontró «' + label + '», o el permiso ' + (viaClave ? 'del acceso publicado' : 'del código') + ' ya no llega hasta él. ' + (viaClave ? 'Crea la clave única de nuevo en el computador donde usas Flujo.' : 'Crea un código nuevo en el dispositivo donde ya usas Flujo.');
       else if (probe.code !== 'PUBLIC_REPO' && probe.code !== 'NETWORK') { details = probe.checks.slice(); for (const w of probe.warnings) details.push({ ok: false, text: w }); }
       say(probe.code === 'PUBLIC_REPO' ? 'warn' : 'error', text, details);
       showJoinForm();
@@ -677,7 +867,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
     let res;
     try { res = await sync.pullAll({ onProgress }); }
     catch (e) {
-      say('error', 'La conexión con ' + label + ' quedó guardada, pero no se pudieron descargar los datos: ' + explain(e) + ' Vuelve a pegar el código y la clave para reintentar.');
+      say('error', 'La conexión con ' + label + ' quedó guardada, pero no se pudieron descargar los datos: ' + explain(e) + (viaClave ? ' Vuelve a escribir tu clave para reintentar.' : ' Vuelve a pegar el código y la clave para reintentar.'));
       return;
     }
     const details = [...probe.warnings, ...res.warnings].map((w) => ({ ok: false, text: w }));
@@ -747,6 +937,7 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
       if (!pairCard || destroyed) return;
       codeIn.value = String(code == null ? '' : code);
       keyIn.value = '';
+      codeOpen = true;
       showJoinForm();
       joinOpen = true;
       syncPairMode();
@@ -765,10 +956,14 @@ export function mountSyncSettings(containerEl, { store, sync, engine = null, aut
       if (autosaver && typeof autosaver.removeEventListener === 'function') autosaver.removeEventListener('status', onSaverStatus);
       wipePair();                                        // el código y la clave no sobreviven a la pantalla
       showJoinForm();
-      codeIn.value = ''; keyIn.value = '';
+      codeIn.value = ''; keyIn.value = ''; accIn.value = '';
+      cuIssued = null; cuText.value = ''; cuPass1.value = ''; cuPass2.value = '';
       root.remove();
     }
   };
   if (pairingCode) api.setPairingCode(pairingCode);
+  if (withPairing) {             // clave única: ¿la app publicada trae acceso.json?
+    fetchAccess().then((a) => { if (destroyed) return; access = a; layoutJoin(); refreshCu(); }).catch(() => { /* sin acceso: todo sigue igual */ });
+  }
   return api;
 }

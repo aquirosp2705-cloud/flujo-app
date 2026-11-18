@@ -483,9 +483,11 @@ export function renderSummary(S, opts = {}) {
 
   const rows = S.sources.filter((s) => s.count);
   if (rows.length) {
+    const tot = sourceTotals(S);
     const table = el('table', { class: 't rb-src' }, el('caption', { class: 'rb-sr', text: 'Por cuenta y tarjeta' }),
       el('thead', {}, el('tr', {}, el('th', { scope: 'col', text: 'Cuenta o tarjeta' }), el('th', { scope: 'col', class: 'r', text: 'Ingresos' }), el('th', { scope: 'col', class: 'r', text: 'Egresos' }), el('th', { scope: 'col', class: 'r', text: 'No suman' }))),
-      el('tbody', {}, ...rows.map((s) => el('tr', {}, el('th', { scope: 'row', text: s.label }), el('td', { class: 'r', text: s.in ? money(s.in) : '—' }), el('td', { class: 'r', text: s.out ? money(s.out) : '—' }), el('td', { class: 'r', text: s.skip ? money(s.skip) : '—' })))));
+      el('tbody', {}, ...rows.map((s) => el('tr', {}, el('th', { scope: 'row', text: s.label }), el('td', { class: 'r', text: s.in ? money(s.in) : '—' }), el('td', { class: 'r', text: s.out ? money(s.out) : '—' }), el('td', { class: 'r', text: s.skip ? money(s.skip) : '—' })))),
+      el('tfoot', {}, el('tr', { class: 'rb-src-tot' }, el('th', { scope: 'row', text: 'Total' }), el('td', { class: 'r', text: money(tot.in) }), el('td', { class: 'r', text: money(tot.out) }), el('td', { class: 'r', text: money(tot.skip) }))));
     root.append(el('section', { class: 'rb-sec' }, el('div', { class: 'rb-sec-h' }, el('h3', { text: 'Por cuenta y tarjeta' })), el('div', { class: 'scrollx' }, table)));
   }
   if (S.notes.length) root.append(notesBox(S.notes));
@@ -496,7 +498,14 @@ function notesBox(notes) {
     el('ul', { class: 'rb-note-list' }, ...notes.map((n) => el('li', { class: n.level === 'warn' ? 'warn' : '', 'data-id': n.id, text: n.text }))));
 }
 
-/** Filas para Excel: hoja «Resumen» y hoja «Detalle». */
+/** Totales de la tabla «Por cuenta y tarjeta»: la suma de cada columna (ingresos y egresos coinciden con los totales de arriba). */
+export function sourceTotals(S) {
+  const rows = S.sources.filter((s) => s.count);
+  const add = (k) => r2(rows.reduce((a, s) => a + (s[k] || 0), 0));
+  return { in: add('in'), out: add('out'), skip: add('skip') };
+}
+
+/** Filas para Excel: hoja «Resumen» y hoja «Detalle». srcRows = [primera, última] fila (base 0) de la tabla por cuenta, con su total. */
 export function summaryToRows(S) {
   const M = S.month, t = S.totals;
   const res = [['Ingresos y egresos de ' + M.label], ['Bancos y tarjetas de Flujo · generado el ' + new Date().toLocaleDateString('es-EC')], [],
@@ -508,6 +517,16 @@ export function summaryToRows(S) {
   for (const g of S.groups.card) res.push(['No suma · pago de tarjeta', g.label, g.total, g.count, g.sources.join(', ')]);
   for (const g of S.groups.xfer) res.push(['No suma · entre tus cuentas', g.label, g.total, g.count, g.sources.join(', ')]);
   for (const g of S.groups.inv) res.push(['No suma · pólizas', g.label, g.total, g.count, g.sources.join(', ')]);
+  let srcRows = null;
+  const bySrc = S.sources.filter((s) => s.count);
+  if (bySrc.length) {
+    const tot = sourceTotals(S);
+    res.push([], ['Por cuenta y tarjeta'], ['', 'Cuenta o tarjeta', 'Ingresos', 'Egresos', 'No suman']);
+    const first = res.length;
+    for (const s of bySrc) res.push(['', s.label, s.in, s.out, s.skip]);
+    res.push(['', 'TOTAL', tot.in, tot.out, tot.skip]);
+    srcRows = [first, res.length - 1];
+  }
   if (S.notes.length) { res.push([], ['Para revisar']); for (const n of S.notes) res.push([n.text]); }
   const kindTxt = { in: 'Ingreso', out: 'Egreso', fee: 'Egreso (comisión)', card: 'No suma · pago de tarjeta', xfer: 'No suma · entre tus cuentas', inv: 'No suma · pólizas' };
   const det = [['Mes o fecha', 'Cuenta o tarjeta', 'Tipo', 'Rubro', 'Concepto', 'Monto', 'Fila de la hoja', 'Nota']];
@@ -520,18 +539,19 @@ export function summaryToRows(S) {
       }
     }
   }
-  return { resumen: res, detalle: det };
+  return { resumen: res, detalle: det, srcRows };
 }
 
 /** Descarga el resumen como .xlsx (SheetJS se carga solo la primera vez). */
 export async function downloadSummary(S) {
   const X = await import('./export.js');
   const XLSX = await X.loadXlsxLib();
-  const { resumen, detalle } = summaryToRows(S);
+  const { resumen, detalle, srcRows } = summaryToRows(S);
   const money2 = '#,##0.00';
   const ws1 = XLSX.utils.aoa_to_sheet(resumen), ws2 = XLSX.utils.aoa_to_sheet(detalle);
   const fmt = (ws, col, from) => { for (let r = from; ; r++) { const a = XLSX.utils.encode_cell({ r, c: col }); const range = XLSX.utils.decode_range(ws['!ref']); if (r > range.e.r) break; if (ws[a] && typeof ws[a].v === 'number') ws[a].z = money2; } };
   fmt(ws1, 2, 4); fmt(ws2, 5, 1);
+  if (srcRows) for (let r = srcRows[0]; r <= srcRows[1]; r++) for (const c of [3, 4]) { const a = XLSX.utils.encode_cell({ r, c }); if (ws1[a] && typeof ws1[a].v === 'number') ws1[a].z = money2; }
   ws1['!cols'] = [{ wch: 26 }, { wch: 34 }, { wch: 14 }, { wch: 12 }, { wch: 40 }];
   ws2['!cols'] = [{ wch: 12 }, { wch: 26 }, { wch: 24 }, { wch: 28 }, { wch: 34 }, { wch: 13 }, { wch: 10 }, { wch: 20 }];
   const wb = XLSX.utils.book_new();

@@ -167,8 +167,10 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   «Comisiones bancarias». Pantalla `#/rubros/AAAA-MM`; ventana automática al cerrar el mes; Excel con hojas Resumen y Detalle.
 - El aviso de pólizas espera si al abrir hay otra ventana (por ejemplo, el atajo «Anotar») y se revisa también cada 5 minutos
   y al volver el foco, por si la app queda abierta de un día para otro.
-- Pruebas: `test/rubros-test.html` (135 con 8 meses de datos reales: `?data=` apunta a una copia local; incluye casos de
-  `assignMonths`) y `_e2e/rubros_e2e.py` (33: aviso al abrir con el reloj en 03/12, pantalla, cierre de noviembre con la
+- La tabla «Por cuenta y tarjeta» termina con una fila **Total** (suma de ingresos, egresos y lo que no suma; ingresos y egresos
+  coinciden con los totales de arriba) y va también en la hoja Resumen del Excel (v29). En el celular las 4 columnas caben sin deslizar.
+- Pruebas: `test/rubros-test.html` (167 con 8 meses de datos reales: `?data=` apunta a una copia local; incluye casos de
+  `assignMonths`) y `_e2e/rubros_e2e.py` (41: aviso al abrir con el reloj en 03/12, pantalla, cierre de noviembre con la
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 

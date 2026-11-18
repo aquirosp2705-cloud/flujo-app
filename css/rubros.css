@@ -82,6 +82,13 @@
 
 .rb-src { font-size: 13.5px; }
 .rb-src th[scope="row"] { font-weight: 600; white-space: nowrap; }
+.rb-src tfoot th, .rb-src tfoot td { font-weight: 750; border-top: 2px solid var(--ink); border-bottom: 0; }   /* fila «Total»: suma de cada columna */
+@media (max-width: 480px) {                                               /* celular: las 4 columnas caben sin deslizar de lado */
+  .rb-src { font-size: 12.5px; }
+  .rb-src th, .rb-src td { padding: 7px 3px; }
+  .rb-src thead th { font-size: 11.5px; }
+  .rb-src th[scope="row"] { white-space: normal; }
+}
 .rb-sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 .rb-note-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }

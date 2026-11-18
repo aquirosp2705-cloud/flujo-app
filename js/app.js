@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '22';
+const VERSION = '23';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -136,6 +136,7 @@ async function boot() {
   const S = state.mods['sync-github'];
   if (state.store && S) { try { state.sync = await S.GithubSync.fromStore(state.store); applyUrlConfig(); } catch (e) { console.warn('[sync] no disponible', e); state.syncLoadError = e; } }
   if (bundle && syncOn() && navigator.onLine) bundle = await preSync(bundle);     // trae lo que otro dispositivo haya guardado ANTES de armar el motor
+  if (!bundle && state.store && syncOn() && navigator.onLine) bundle = await resumeDownload();   // conectado pero sin datos: no se vuelve a pedir la clave
   if (!bundle) bundle = await firstRun();
   if (state.store) {      // hojas que meta.json ya no lista (borradas desde otro dispositivo): se quitan también de este
     try { for (const id of await state.store.pruneOrphans()) delete bundle.sheetDatas[id]; } catch (e) { console.warn('[store] no se pudieron limpiar las hojas borradas:', e); }
@@ -165,6 +166,22 @@ async function preSync(bundle) {
     if (res && res.changed) { const b = await state.store.loadBundle(); if (b) return b; }
   } catch (e) { console.warn('[sync] no se pudo consultar GitHub al iniciar:', e && e.message); }
   return bundle;
+}
+
+/** El dispositivo ya está conectado pero no tiene datos: la primera descarga se cortó (p. ej. se cerró la app en el iPhone mientras bajaba).
+ *  Se baja todo con la conexión guardada en vez de volver a la pantalla de primer uso (que pediría la clave otra vez). */
+async function resumeDownload() {
+  setBoot('Este dispositivo ya está conectado: descargando tus datos…', 20);
+  try {
+    const res = await state.sync.pullAll({
+      timeoutMs: 180000,
+      onProgress: (p) => { if (p && p.total > 0 && p.phase !== 'tree') setBoot('Descargando tus datos… ' + Math.min(100, Math.round((100 * (p.done || 0)) / p.total)) + '%', 20 + Math.round((15 * (p.done || 0)) / p.total)); },
+    });
+    if (res && res.conflicts && res.conflicts.length) state.startConflicts = res.conflicts;
+    const b = await state.store.loadBundle();
+    if (b) return b;
+  } catch (e) { console.warn('[sync] no se pudo descargar con la conexión guardada:', e && e.message); }
+  return null;
 }
 
 async function firstRun() {

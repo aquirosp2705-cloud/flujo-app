@@ -50,9 +50,12 @@
 @media (max-width: 640px) {
   .fxg-name { width: 74px; }
   .fxg-tools button { padding: 6px 8px; }
-  /* en el móvil las herramientas se esconden detrás de «⋯» para dejar más espacio a la hoja */
-  .fxg-tools { display: none; }
-  .fxg.fxg-tools-open .fxg-tools { display: flex; }
+  /* v24: en el celular quedan SIEMPRE a la vista deshacer, rehacer y el formato (negrita, colores); el resto, detrás de «⋯» */
+  .fxg:not(.fxg-tools-open) .fxg-tools > :not([data-act="undo"]):not([data-act="redo"]):not(.fxg-fmt) { display: none; }
+  .fxg:not(.fxg-tools-open) .fxg-tools .fxg-lbl { display: none; }
+  .fxg:not(.fxg-tools-open) .fxg-tools button { min-width: 40px; min-height: 36px; }
+  .fxg:not(.fxg-tools-open) .fxg-tools button[data-act="undo"], .fxg:not(.fxg-tools-open) .fxg-tools button[data-act="redo"] { font-size: 20px; line-height: 1; }
+  .fxg.fxg-ro:not(.fxg-tools-open) .fxg-tools { display: none; }      /* solo lectura: no hay nada que deshacer ni formatear */
   .fxg-more { display: inline-flex; align-items: center; justify-content: center; }
   .fxg-fx { display: none; }
 }

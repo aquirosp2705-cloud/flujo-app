@@ -57,8 +57,8 @@ export class SheetGrid {
     r.style.setProperty('--rh', ROWHDR_W + 'px'); r.style.setProperty('--ch', COLHDR_H + 'px');
     r.innerHTML = `
       ${this.opts.toolbar ? `<div class="fxg-tools" role="toolbar" aria-label="Herramientas de la hoja">
-        <button data-act="undo" title="Deshacer (Ctrl+Z)">↶ Deshacer</button>
-        <button data-act="redo" title="Rehacer (Ctrl+Y)">↷ Rehacer</button>
+        <button data-act="undo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer">↶<span class="fxg-lbl"> Deshacer</span></button>
+        <button data-act="redo" title="Rehacer (Ctrl+Y)" aria-label="Rehacer">↷<span class="fxg-lbl"> Rehacer</span></button>
         <button data-act="copy" title="Copiar (Ctrl+C)">Copiar</button>
         <button data-act="paste" title="Pegar (Ctrl+V)">Pegar</button>
         <button data-act="fill" title="Rellenar hacia abajo (Ctrl+D)">Rellenar ↓</button>

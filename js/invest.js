@@ -149,6 +149,7 @@ export function migratePatrimonio(eng) {
   const cells = ['L24'];
   eng.set(CONSOL, 23, 11, '=+' + q + 'C' + (rowTot + 1) + '-SUMIF(' + q + '$D$' + r0 + ':$D$' + r1 + ',"reserva",' + q + '$C$' + r0 + ':$C$' + r1 + ')');
   if (m && typeof raw27 === 'string' && OLD27.test(raw27.replace(/\s+/g, ''))) { eng.set(CONSOL, 26, 11, '=+' + q + 'C' + m[1]); cells.push('L27'); }
+  try { if (eng.hf && typeof eng.hf.clearUndoStack === 'function') eng.hf.clearUndoStack(); } catch (e) { /* nada */ }   // un Ctrl+Z en una hoja no debe deshacer este ajuste
   return { cells, before, after: num(eng, CONSOL, 23, 11) };
 }
 

@@ -6,12 +6,16 @@
  *
  * Teclado: flechas, Shift+flechas, Ctrl+flechas, Tab/Enter, Inicio/Fin, RePág/AvPág, F2, Supr, Ctrl+C/X/V/Z/Y/D/R/A/F.
  * Ratón: clic/arrastre, doble clic = editar, asa de relleno (cuadrito azul) arrastrando hacia abajo/derecha, borde de encabezado = ancho.
- * Táctil: tocar = seleccionar, tocar de nuevo = editar; barra de herramientas con deshacer, copiar, pegar, rellenar, zoom, ir al final.
+ * Táctil: tocar = seleccionar, tocar de nuevo = editar, arrastrar el circulito azul de la esquina = seleccionar un rango (abajo se ven
+ *   su suma, promedio y cuenta); para copiar hacia abajo está «Rellenar ↓». Barra de herramientas con deshacer, copiar, pegar, zoom, ir al final.
  * Formato: negrita, color de letra, relleno y bordes (raya abajo, raya arriba, arriba y abajo, todos, contorno, sin bordes); se deshace con Ctrl+Z.
  */
 import { cellKey as K, colLetter, addrToA1, a1ToAddr } from './engine.js';
 import { fmtCell, styleCss, editText, parseInput, isDateFormat } from './format.js';
 import { toSpanish } from './formula-es.js';
+
+/** ¿Pantalla táctil como puntero principal (celular, tableta)? Ahí el asa de la esquina selecciona en vez de rellenar. */
+const COARSE = () => { try { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch (e) { return false; } };
 
 /* Colores de las celdas que usa la fórmula que se está editando (como Excel: cada referencia con su color). */
 const REF_COLORS = ['#1c7ed6', '#e8590c', '#7048e8', '#2f9e44', '#d6336c', '#0c8599', '#f59f00', '#5c940d'];
@@ -108,6 +112,7 @@ export class SheetGrid {
     on(this.handle, 'pointerdown', (e) => this._onHandleDown(e));
     on(window, 'pointermove', (e) => this._onPointerMove(e));
     on(window, 'pointerup', (e) => this._onPointerUp(e));
+    on(window, 'pointercancel', () => this._onPointerCancel());
     on(this.colHdr, 'pointerdown', (e) => this._onColHdrDown(e));
     on(this.rowHdr, 'pointerdown', (e) => this._onRowHdrDown(e));
     on(this.kb, 'keydown', (e) => this._onKey(e));
@@ -169,7 +174,7 @@ export class SheetGrid {
     this.opts.readOnly = ro;
     this.root.classList.toggle('fxg-ro', ro);
     if (this.bar) { this.bar.readOnly = ro; if (ro) this.barDirty = false; }
-    if (this.handle && ro) this.handle.style.display = 'none';
+    if (this.handle && ro && !COARSE()) this.handle.style.display = 'none';
     if (this.tools) {
       for (const b of this.tools.querySelectorAll('button[data-act]')) {
         const act = b.dataset.act;
@@ -383,7 +388,8 @@ export class SheetGrid {
     const a = this._cellRect(this.anchor.r, this.anchor.c);
     this.actEl.style.cssText = `display:block;left:${a.x}px;top:${a.y}px;width:${a.w}px;height:${a.h}px`;
     const box = this._box(document.createElement('div'), R);
-    this.handle.style.cssText = this.opts.readOnly ? 'display:none' : `display:block;left:${box.x + box.w - 5}px;top:${box.y + box.h - 5}px`;
+    // con ratón el asa rellena (no en solo lectura); en pantallas táctiles selecciona un rango, también en solo lectura (para ver la suma)
+    this.handle.style.cssText = this.opts.readOnly && !COARSE() ? 'display:none' : `display:block;left:${box.x + box.w - 5}px;top:${box.y + box.h - 5}px`;
     if (this.clip && this.clip.sid === this.sid) { this._box(this.clipEl, this.clip); } else this.clipEl.style.display = 'none';
   }
 
@@ -429,6 +435,7 @@ export class SheetGrid {
     }
     const f = (x) => x.toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
     this.stR.textContent = n ? `Suma ${f(sum)} · Promedio ${f(sum / n)} · Cuenta ${cnt}` : (cnt ? `Cuenta ${cnt}` : '');
+    this.stR.classList.toggle('sum', n > 0);
   }
 
   /* ------------------------------------------------------------------ apuntar (como Excel)
@@ -578,10 +585,22 @@ export class SheetGrid {
     this.anchor = { r: cell.r, c: cell.c }; this.focus = { ...this.anchor };
     this._beginEdit('edit', null);
   }
+  /** Asa de la esquina: con ratón rellena hacia abajo/derecha (como Excel); con el dedo o un lápiz extiende la selección (como Excel y
+   *  Google Sheets en el celular), así se ve la suma del rango; para copiar en el celular está «Rellenar ↓». */
   _onHandleDown(e) {
-    if (this.opts.readOnly) return;
     e.preventDefault(); e.stopPropagation();
-    this.drag = { type: 'fill', src: this._rect(), target: null };
+    if (this.edit) this._commitEdit(null);
+    if (e.pointerType === 'mouse' && !this.opts.readOnly) { this.drag = { type: 'fill', src: this._rect(), target: null }; return; }
+    this._focusKb();
+    this.drag = { type: 'select', grip: true };
+  }
+  /** El sistema canceló el gesto (p. ej. iOS lo tomó para desplazar): se suelta sin hacer nada. */
+  _onPointerCancel() {
+    this._touch = null;
+    if (!this.drag) return;
+    if (this.drag.type === 'fill') this.fillEl.style.display = 'none';
+    if (this.drag.type === 'colresize') this.colHdr.style.cursor = '';
+    this.drag = null;
   }
   _onColHdrDown(e) {
     const t = e.target.closest('[data-c]'); if (!t) return;
@@ -757,8 +776,9 @@ export class SheetGrid {
     if (isNum && /^[-+]?\s*\$/.test(String(text).trim())) return '$#,##0.00';      // «$12.5» sin nada arriba: dólares con centavos
     return undefined;
   }
-  _afterChange(changes, { fromUndo = false } = {}) {
-    if (!fromUndo) this._pushHist({ hf: true });
+  /** steps = cuántas operaciones del motor hizo este cambio (rellenar pega fila por fila): Deshacer las revierte todas juntas. */
+  _afterChange(changes, { fromUndo = false, steps = 1 } = {}) {
+    if (!fromUndo) { this._pushHist({ hf: true, steps }); this._redoN = []; }
     this._relayoutIfGrown();
     this._paint(true); this._paintSel(); this._updateBar(); this._updateStatus();
     this.opts.onChange({ sid: this.sid, changes });
@@ -773,9 +793,22 @@ export class SheetGrid {
     if (this.opts.readOnly) return;
     const h = this._hist && this._hist.length ? this._hist.pop() : null;
     if (h && h.fmt) { for (const [r, c, s] of h.fmt) this.sh.setStyle(r, c, s); this._afterFormat(); return; }   // el último cambio fue de formato
-    const ch = this.eng.undo(); if (ch === null) this._toast('Nada que deshacer'); else this._afterChange(ch, { fromUndo: true });
+    const n = h && h.hf && h.steps > 1 ? h.steps : 1;
+    let all = null;
+    for (let i = 0; i < n; i++) { const ch = this.eng.undo(); if (ch === null) break; all = (all || []).concat(ch); }
+    if (all === null) { this._toast('Nada que deshacer'); return; }
+    (this._redoN || (this._redoN = [])).push(n);
+    this._afterChange(all, { fromUndo: true });
   }
-  _redo() { if (this.opts.readOnly) return; const ch = this.eng.redo(); if (ch === null) this._toast('Nada que rehacer'); else this._afterChange(ch, { fromUndo: true }); }
+  _redo() {
+    if (this.opts.readOnly) return;
+    const n = this._redoN && this._redoN.length ? this._redoN.pop() : 1;
+    let all = null;
+    for (let i = 0; i < n; i++) { const ch = this.eng.redo(); if (ch === null) break; all = (all || []).concat(ch); }
+    if (all === null) { this._toast('Nada que rehacer'); return; }
+    this._pushHist({ hf: true, steps: n });                                  // vuelve a quedar para Deshacer, en su orden
+    this._afterChange(all, { fromUndo: true });
+  }
   _pushHist(x) { if (!this._hist) this._hist = []; this._hist.push(x); if (this._hist.length > 200) this._hist.shift(); }
 
   /* ----------------------------------------------------------------- formato: negrita y colores (para conciliar) */
@@ -918,9 +951,10 @@ export class SheetGrid {
   _fillDown() {
     if (this.opts.readOnly) return;
     const R = this._rect(); let ch = [];
+    let steps = 1;
     if (R.r0 === R.r1) { if (R.r0 === 0) return; ch = this.eng.copyPaste(this.sid, R.r0 - 1, R.c0, R.r0 - 1, R.c1, this.sid, R.r0, R.c0); }
-    else for (let r = R.r0 + 1; r <= R.r1; r++) ch = ch.concat(this.eng.copyPaste(this.sid, R.r0, R.c0, R.r0, R.c1, this.sid, r, R.c0));
-    this._afterChange(ch);
+    else { steps = R.r1 - R.r0; for (let r = R.r0 + 1; r <= R.r1; r++) ch = ch.concat(this.eng.copyPaste(this.sid, R.r0, R.c0, R.r0, R.c1, this.sid, r, R.c0)); }
+    this._afterChange(ch, { steps });
   }
   _fillRight() {
     if (this.opts.readOnly) return;
@@ -932,15 +966,17 @@ export class SheetGrid {
   _doFill(src, tgt) {
     if (this.opts.readOnly) return;
     let ch = [];
+    let steps = 0;
     if (tgt.r1 > src.r1) {
       const rows = src.r1 - src.r0 + 1;
-      for (let r = src.r1 + 1; r <= tgt.r1; r++) { const s = src.r0 + ((r - src.r1 - 1) % rows); ch = ch.concat(this.eng.copyPaste(this.sid, s, src.c0, s, src.c1, this.sid, r, src.c0)); }
+      for (let r = src.r1 + 1; r <= tgt.r1; r++) { const s = src.r0 + ((r - src.r1 - 1) % rows); ch = ch.concat(this.eng.copyPaste(this.sid, s, src.c0, s, src.c1, this.sid, r, src.c0)); steps++; }
     } else if (tgt.c1 > src.c1) {
       const cols = src.c1 - src.c0 + 1;
-      for (let c = src.c1 + 1; c <= tgt.c1; c++) { const s = src.c0 + ((c - src.c1 - 1) % cols); ch = ch.concat(this.eng.copyPaste(this.sid, src.r0, s, src.r1, s, this.sid, src.r0, c)); }
+      for (let c = src.c1 + 1; c <= tgt.c1; c++) { const s = src.c0 + ((c - src.c1 - 1) % cols); ch = ch.concat(this.eng.copyPaste(this.sid, src.r0, s, src.r1, s, this.sid, src.r0, c)); steps++; }
     }
+    if (!steps) return;
     this.anchor = { r: tgt.r0, c: tgt.c0 }; this.focus = { r: tgt.r1, c: tgt.c1 };
-    this._afterChange(ch); this._afterSelect(false);
+    this._afterChange(ch, { steps }); this._afterSelect(false);
   }
 
   /* ---------------------------------------------------------------- portapapeles */

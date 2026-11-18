@@ -174,6 +174,17 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Seleccionar un rango y ver su suma (v32)
+- Abajo de la hoja, al seleccionar varias celdas, se lee **Suma · Promedio · Cuenta** (en negrita; en el celular tiene prioridad
+  sobre el nombre de la hoja y se lee entera).
+- Computadora (ratón): como Excel — arrastrar desde una celda selecciona el rango; el cuadrito de la esquina copia hacia abajo o
+  a la derecha.
+- Celular y tableta (pantalla táctil, `pointer: coarse`): el asa de la esquina es un **circulito** que, al arrastrarlo con el
+  dedo, **selecciona** el rango (como Excel y Google Sheets en el celular); para copiar hacia abajo está «Rellenar ↓». Arrastrar
+  sobre la hoja sigue desplazándola. En solo lectura (visor del archivo) el circulito también sirve para sumar.
+- Rellenar (asa o «Rellenar ↓») se deshace y se rehace de una sola vez (antes, fila por fila).
+- Prueba: `_e2e/rango_e2e.py` (16, con toques reales simulados por CDP).
+
 ## Patrimonio (v30, v31)
 Por decisión de la usuaria (18/11/2026): **patrimonio = bancos menos provisiones + inversiones SIN la póliza «reserva»** (v31;
 en v30 eran todas). CONSOL L24 = `total invertido − SUMAR.SI(destino del bloque de pólizas; "reserva"; montos)`: sigue bien si la

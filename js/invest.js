@@ -10,15 +10,16 @@
  *   - CONSOL (s01) L24 «inversiones» (lo que cuenta el patrimonio), L26 «inversiones out» y L27 «total polizas» explican
  *     por qué el patrimonio muestra menos que el total invertido
  *
- * Patrimonio (v30, pedido de la usuaria): patrimonio = bancos menos provisiones + TODAS las inversiones (el «total invertido»).
- *   migratePatrimonio cambia una sola vez CONSOL L24 («total pólizas − inversiones out») por el total invertido, y L27 («total
- *   pólizas» = L24 + L26) por el total de la hoja de pólizas, para que la celda de control de esa hoja siga en cero.
+ * Patrimonio (pedido de la usuaria): patrimonio = bancos menos provisiones + las inversiones SIN la póliza «reserva» (v31; en v30
+ *   contaba todas). La reserva sigue en inversiones y se muestra aparte. migratePatrimonio cambia CONSOL L24 («total pólizas −
+ *   inversiones out», o la de v30 «total invertido») por «total invertido − SUMAR.SI(destino = "reserva")», y L27 («total pólizas»
+ *   = L24 + L26) por el total de la hoja de pólizas, para que la celda de control de esa hoja siga en cero.
  *
  * API:  readInvestments(engine, {today}) -> datos · renderInvest(host, engine, opts) -> datos (o null si no hay pólizas)
  *       migratePatrimonio(engine) -> celdas cambiadas o null
  *       duePolicies(engine, {today, days}) -> pólizas que vencen en 5 días o menos · showDueAlert(ctx, lista, opts) -> aviso al abrir la app
  */
-import { listPolicies } from './quick.js';
+import { listPolicies, LAYOUTS } from './quick.js';
 import { el, money, dateText } from './ui.js';
 import { todaySerial } from './format.js';
 
@@ -51,6 +52,9 @@ export function dueLine(due, daysLeft) {
   return (isNum(daysLeft) && daysLeft < 0 ? 'Venció ' : 'Vence ') + dateText(due) + ' (' + whenText(daysLeft) + ')';
 }
 
+/** ¿La póliza es la «reserva»? (su destino, columna D o B, dice «reserva»): no cuenta en el patrimonio (v31). */
+const isReserve = (p) => /^reserva$/i.test(String(p.dest || '').trim());
+
 /**
  * Lee las inversiones.
  * @returns {{ok:boolean, total:number|null, sum:number, sheetTotal:number|null, mismatch:number|null, count:number,
@@ -75,13 +79,16 @@ export function readInvestments(eng, opts = {}) {
   for (const p of main) {
     const name = String(p.bank || '').trim() || 'Sin banco', k = name.toLowerCase().replace(/\s+/g, ' ');
     let b = byBank.get(k);
-    if (!b) { b = { name, amount: 0, count: 0, next: null }; byBank.set(k, b); }
+    if (!b) { b = { name, amount: 0, count: 0, next: null, reserve: 0 }; byBank.set(k, b); }
     b.amount += p.amount; b.count++;
+    if (isReserve(p)) b.reserve = round2(b.reserve + p.amount);
     if (!b.next || p.due < b.next.due) b.next = { due: p.due, daysLeft: p.daysLeft, level: p.level };
   }
   const sum = round2(main.reduce((a, p) => a + p.amount, 0));
   out.banks = [...byBank.values()].map((b) => ({ ...b, amount: round2(b.amount), share: sum > EPS ? b.amount / sum : null })).sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name, 'es'));
   out.sum = sum; out.count = main.length; out.ok = true;
+  const res = main.filter(isReserve);
+  out.reserve = res.length ? { amount: round2(res.reduce((a, p) => a + p.amount, 0)), count: res.length, banks: [...new Set(res.map((p) => String(p.bank || '').trim()).filter(Boolean))], label: String(res[0].dest || 'reserva').trim() } : null;
   const first = main.reduce((a, p) => (!a || p.due < a.due ? p : a), null);
   out.next = first ? { due: first.due, daysLeft: first.daysLeft, bank: String(first.bank || '').trim() } : null;
 
@@ -104,16 +111,20 @@ export function readInvestments(eng, opts = {}) {
       labels: { inv: txt(eng, CONSOL, 23, 10) || 'inversiones', out: txt(eng, CONSOL, 25, 10) || 'inversiones out', tot: txt(eng, CONSOL, 26, 10) || 'total pólizas' },
       diff: round2(tot - (sum + (out.savings ? out.savings.amount : 0))),
       full: Math.abs(inv - sum) < EPS,                       // el patrimonio cuenta todas las inversiones (v30)
+      // v31: cuenta las inversiones sin la reserva
+      noReserve: !!out.reserve && Math.abs(inv - (sum - out.reserve.amount)) < EPS,
     };
   }
   return out;
 }
 
-/* ================================================================== patrimonio con todas las inversiones (v30) */
+/* ================================================================== patrimonio: inversiones sin la reserva (v30 → v31) */
 /**
- * Una sola vez: CONSOL L24 («inversiones» del patrimonio) deja de ser «total pólizas − inversiones out» y pasa a ser el «total
- * invertido» de la hoja de pólizas; L27 («total pólizas», que era L24 + L26) pasa a leer el total de la hoja de pólizas, así su
- * celda de control sigue en cero. Solo actúa si L24 todavía tiene la fórmula vieja (se reconoce por su forma, no por el valor).
+ * Una sola vez: CONSOL L24 («inversiones» del patrimonio) pasa a ser «total invertido − las pólizas cuyo destino es "reserva"»
+ * (SUMAR.SI sobre la columna de destino del bloque de pólizas, así sigue bien si la reserva se renueva o cambia de monto). Sirve
+ * desde la fórmula vieja («total pólizas − inversiones out»; entonces L27 «total pólizas», que era L24 + L26, pasa a leer el total
+ * de la hoja de pólizas para que su celda de control siga en cero) y desde la de v30 (todo el total invertido). Si L24 tiene otra
+ * fórmula (la de v31 o una que ella escribió), no se toca. Se reconoce por la forma de la fórmula, no por el valor.
  * Los meses ya cerrados no cambian (son valores). @returns {{cells:string[], before:number|null, after:number|null}|null}
  */
 export function migratePatrimonio(eng) {
@@ -126,15 +137,18 @@ export function migratePatrimonio(eng) {
   const OLD24 = new RegExp('^=\\+?' + ref + 'C\\$?(\\d+)-' + ref + 'D\\$?(\\d+)$', 'i');
   const OLD27 = /^=\+?\$?L\$?24\+\$?L\$?26$/i;
   const raw24 = eng.raw(CONSOL, 23, 11), raw27 = eng.raw(CONSOL, 26, 11);
-  const m = typeof raw24 === 'string' ? OLD24.exec(raw24.replace(/\s+/g, '')) : null;
-  if (!m) return null;
+  const flat = typeof raw24 === 'string' ? raw24.replace(/\s+/g, '') : '';
   const rowTot = findRow(eng, SID, 1, /^total\s+invertido$/i);
   if (rowTot < 0 || num(eng, SID, rowTot, 2) === null) return null;
+  const m = OLD24.exec(flat);                                           // fórmula vieja: total pólizas − inversiones out
+  const V30 = new RegExp('^=\\+?' + ref + 'C\\$?' + (rowTot + 1) + '$', 'i');   // la de v30: todo el total invertido
+  if (!m && !V30.test(flat)) return null;                               // ya está la de v31 (o la cambió ella a mano): no se toca
   const q = "'" + name.replace(/'/g, "''") + "'!";
+  const r0 = ((LAYOUTS && LAYOUTS.poliza && LAYOUTS.poliza.first) || 16) + 1, r1 = rowTot;   // el bloque de pólizas, hasta la fila del total
   const before = num(eng, CONSOL, 23, 11);
   const cells = ['L24'];
-  eng.set(CONSOL, 23, 11, '=+' + q + 'C' + (rowTot + 1));
-  if (typeof raw27 === 'string' && OLD27.test(raw27.replace(/\s+/g, ''))) { eng.set(CONSOL, 26, 11, '=+' + q + 'C' + m[1]); cells.push('L27'); }
+  eng.set(CONSOL, 23, 11, '=+' + q + 'C' + (rowTot + 1) + '-SUMIF(' + q + '$D$' + r0 + ':$D$' + r1 + ',"reserva",' + q + '$C$' + r0 + ':$C$' + r1 + ')');
+  if (m && typeof raw27 === 'string' && OLD27.test(raw27.replace(/\s+/g, ''))) { eng.set(CONSOL, 26, 11, '=+' + q + 'C' + m[1]); cells.push('L27'); }
   return { cells, before, after: num(eng, CONSOL, 23, 11) };
 }
 
@@ -205,6 +219,7 @@ export function renderInvest(host, eng, opts = {}) {
       el('span', { class: 'db-inv-amt', text: money(b.amount) }),
       pct === null ? null : el('span', { class: 'db-share', role: 'img', 'aria-label': pct + '% del total invertido' }, el('i', { style: { width: Math.max(2, b.share * 100).toFixed(1) + '%' } })),
       el('span', { class: 'db-bank-note', text: (pct === null ? '' : pct + '% del total · ') + b.count + ' ' + plural(b.count, 'póliza', 'pólizas') }),
+      b.reserve > EPS ? el('span', { class: 'db-bank-note db-inv-res', text: 'Incluye ' + money(b.reserve) + ' de reserva' }) : null,
       b.next ? el('span', { class: 'db-bank-note db-inv-due ' + (b.next.level === 'late' ? 'late' : b.next.level === 'due' ? 'due' : ''), text: dueLine(b.next.due, b.next.daysLeft) }) : null));
   }
   host.append(ul);
@@ -217,7 +232,15 @@ export function renderInvest(host, eng, opts = {}) {
   }
 
   const p = d.patrimonio;
-  if (p && p.full) {
+  if (d.reserve && d.reserve.amount > EPS) {
+    host.append(el('p', { class: 'db-inv-reserve small', role: 'note', text: 'Reserva: ' + money(d.reserve.amount) + (d.reserve.banks.length ? ' (' + d.reserve.banks.join(', ') + ')' : '') +
+      ' — está en inversiones, pero ' + (p && p.noReserve ? 'no cuenta' : 'no debería contar') + ' en el patrimonio.' }));
+  }
+  if (p && p.noReserve) {
+    host.append(el('p', { class: 'db-inv-note small muted', text: 'El patrimonio cuenta tus inversiones sin la reserva: ' + money(p.inversiones) + '.' +
+      (d.savings && d.savings.amount > EPS ? ' Los ' + money(d.savings.amount) + ' de ahorros a plazo tampoco entran.' : '') }));
+    if (Math.abs(p.diff) > EPS) host.append(el('p', { class: 'db-inv-warn small', role: 'status', text: 'Ojo: el total pólizas de CONSOL no coincide con la hoja de pólizas (diferencia ' + money(p.diff, { sign: true }) + ').' }));
+  } else if (p && p.full) {
     host.append(el('p', { class: 'db-inv-note small muted', text: 'El patrimonio cuenta todas tus inversiones (' + money(p.inversiones) + ')' +
       (d.savings && d.savings.amount > EPS ? '; los ' + money(d.savings.amount) + ' de ahorros a plazo no entran.' : '.') }));
     if (Math.abs(p.diff) > EPS) host.append(el('p', { class: 'db-inv-warn small', role: 'status', text: 'Ojo: el total pólizas de CONSOL no coincide con la hoja de pólizas (diferencia ' + money(p.diff, { sign: true }) + ').' }));

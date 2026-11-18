@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '30';
+const VERSION = '31';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -270,7 +270,7 @@ async function startWithBundle(bundle) {
     } catch (e) { console.warn('AutoSaver no disponible', e); }
   }
   if (S && state.store && !state.sync) { try { state.sync = new S.GithubSync(state.store, {}); } catch (e) { console.warn(e); } }
-  // v30: el patrimonio cuenta todas las inversiones (una sola vez; se guarda y se sube como un cambio más de CONSOL). Solo en un
+  // v30/v31: el patrimonio cuenta las inversiones sin la reserva (una sola vez; se guarda y se sube como un cambio más de CONSOL). Solo en un
   // dispositivo conectado que ACABA de bajar lo último de GitHub sin conflictos: así nunca choca con el mismo cambio hecho en otro
   // dispositivo (el primero que abre lo hace y los demás lo bajan ya hecho).
   const Inv = state.mods.invest;
@@ -301,7 +301,7 @@ async function startWithBundle(bundle) {
   if (!state.store) toast('Sin almacenamiento local: los cambios NO se guardarán al cerrar.', { type: 'warn', ms: 8000 });
   await route();
   updatePill();
-  if (state.patrimonioMigrado) toast('Patrimonio actualizado: ahora cuenta todas tus inversiones' + (typeof state.patrimonioMigrado.after === 'number' ? ' (' + ui.money(state.patrimonioMigrado.after) + ')' : '') + '.', { type: 'ok', ms: 7000 });
+  if (state.patrimonioMigrado) toast('Patrimonio actualizado: ahora cuenta tus inversiones sin la reserva' + (typeof state.patrimonioMigrado.after === 'number' ? ' (' + ui.money(state.patrimonioMigrado.after) + ')' : '') + '.', { type: 'ok', ms: 7000 });
   checkPolicyAlert();
   if (state.startConflicts && state.startConflicts.length) toast('Hay ' + state.startConflicts.length + ' hoja(s) en conflicto con GitHub: revisa Ajustes → Sincronización.', { type: 'warn', ms: 9000 });
   if (syncOn()) { autoPush(); autoArchive(); }

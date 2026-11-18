@@ -839,17 +839,23 @@ export function mount(host, ctx, opts = {}) {
     return { summary, prov: readProvisions(eng()), series: readNetWorthSeries(eng(), { today }), patriNote: patrimonioNote(summary, today) };
   }
 
-  /** v30: el mes en curso cuenta todas las inversiones y el mes anterior (ya cerrado) las contaba sin «inversiones out»: se explica el salto. */
+  /** Nota del gráfico: la reserva que no cuenta en el patrimonio (v31) y, el mes del cambio, por qué el patrimonio salta (el mes anterior,
+   *  ya cerrado, contaba las inversiones con la fórmula vieja: «total pólizas − inversiones out»). */
   function patrimonioNote(summary, today) {
     try {
-      const pt = summary && summary.patrimonio, inv = pt && pt.parts ? pt.parts[2] : null;
-      if (!inv || !isNum(inv.actual) || !isNum(inv.previous) || Math.abs(inv.actual - inv.previous) < EPS) return null;
       const d = readInvestments(eng(), { today });
       const p = d && d.patrimonio;
-      if (!p || !p.full || Math.abs(inv.previous - (p.total - p.fuera)) > EPS) return null;    // el mes anterior usaba la fórmula vieja
-      const prevLbl = summary.month && summary.month.previousLabel ? summary.month.previousLabel : 'el mes anterior';
-      return 'Desde este mes el patrimonio cuenta todas tus inversiones (' + money(inv.actual) + '). Hasta ' + prevLbl + ' las contaba sin las «' +
-        (p.labels.out || 'inversiones out') + '» (' + money(inv.previous) + '), por eso este mes sube ' + money(inv.actual - inv.previous) + ' más por ese cambio.';
+      if (!p || (!p.noReserve && !p.full)) return null;
+      const out = [];
+      if (p.noReserve) out.push('Tus inversiones suman ' + money(d.sum) + '; la reserva (' + money(d.reserve.amount) + ') está en inversiones pero no cuenta en el patrimonio.');
+      const pt = summary && summary.patrimonio, inv = pt && pt.parts ? pt.parts[2] : null;
+      if (inv && isNum(inv.actual) && isNum(inv.previous) && Math.abs(inv.actual - inv.previous) > EPS && Math.abs(inv.previous - (p.total - p.fuera)) < EPS) {
+        const prevLbl = summary.month && summary.month.previousLabel ? summary.month.previousLabel : 'el mes anterior';
+        const delta = inv.actual - inv.previous;
+        out.push('Desde este mes el patrimonio cuenta tus inversiones ' + (p.noReserve ? 'sin la reserva' : 'completas') + ' (' + money(inv.actual) + '). Hasta ' + prevLbl +
+          ' las contaba sin las «' + (p.labels.out || 'inversiones out') + '» (' + money(inv.previous) + '), por eso este mes ' + (delta >= 0 ? 'sube ' : 'baja ') + money(Math.abs(delta)) + ' por ese cambio.');
+      }
+      return out.length ? out.join(' ') : null;
     } catch (e) { return null; }
   }
 

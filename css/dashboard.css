@@ -180,6 +180,8 @@
 .db-legend[hidden] { display: none; }
 .db-key { display: inline-flex; align-items: center; gap: 7px; }
 .db-hint { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); }
+.db-inv-reserve { margin: 10px 0 0; padding: 8px 10px; border-radius: 10px; background: var(--soft); border: 1px solid var(--line); border-left: 4px solid var(--acc); }   /* reserva: en inversiones, fuera del patrimonio (v31) */
+.db-inv-res { color: var(--warn); }
 .db-hint .touch { display: none; }
 @media (hover: none) { .db-hint .touch { display: inline; } .db-hint .mouse { display: none; } }
 .db-details { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }

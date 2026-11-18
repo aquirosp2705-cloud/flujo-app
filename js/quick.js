@@ -814,6 +814,8 @@ const produb = makeForm({
 /* ================================================================== registro de formularios */
 export { carro, poliza, tcpich, produb };
 export const FORMS = [carro, poliza, tcpich, produb];
+/** Columnas y filas de las hojas de tarjetas y pólizas (base 0), para quien solo las lee (rubros.js: ingresos y egresos del mes). */
+export const LAYOUTS = Object.freeze({ tcpich: TCP, produb: PRB, poliza: POL });
 export const API = Object.fromEntries(FORMS.map((f) => [f.id, f]));
 export const getForm = (id) => API[id] || null;
 /** cambia el título o la descripción de un formulario (p. ej. con nombres propios que no deben vivir en el código) */

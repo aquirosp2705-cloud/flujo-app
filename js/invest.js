@@ -11,6 +11,7 @@
  *     por qué el patrimonio muestra menos que el total invertido
  *
  * API:  readInvestments(engine, {today}) -> datos · renderInvest(host, engine, opts) -> datos (o null si no hay pólizas)
+ *       duePolicies(engine, {today, days}) -> pólizas que vencen en 5 días o menos · showDueAlert(ctx, lista, opts) -> aviso al abrir la app
  */
 import { listPolicies } from './quick.js';
 import { el, money, dateText } from './ui.js';
@@ -100,6 +101,50 @@ export function readInvestments(eng, opts = {}) {
     };
   }
   return out;
+}
+
+/* ================================================================== aviso al abrir la app: pólizas por vencer */
+export const ALERT_DAYS = 5;          // se avisa cuando faltan 5 días o menos (y si ya venció)
+
+/** Pólizas que vencen dentro de `days` días o que ya vencieron, de la más próxima a la más lejana. [] si no hay hoja de pólizas. */
+export function duePolicies(eng, { today, days = ALERT_DAYS } = {}) {
+  const t = isNum(today) ? today : todaySerial();
+  try {
+    if (!eng || typeof eng.sheet !== 'function' || !eng.sheet(SID)) return [];
+    return listPolicies(eng, { today: t }).filter((p) => p.daysLeft <= days);
+  } catch (e) { console.warn('[pólizas]', e); return []; }
+}
+
+/**
+ * Ventana «Pólizas por vencer». opts.onRenew = abrir «Renovar póliza»; opts.days = días del aviso.
+ * @returns {object|null} el modal (o null si no hay nada que avisar)
+ */
+export function showDueAlert(ctx, list, opts = {}) {
+  if (!list || !list.length || !ctx || typeof ctx.modal !== 'function') return null;
+  const days = isNum(opts.days) ? opts.days : ALERT_DAYS;
+  const n = list.length, late = list.filter((p) => p.daysLeft < 0).length, soon = n - late;
+  const lead = late === n ? (n === 1 ? 'Esta póliza ya venció:' : 'Estas ' + n + ' pólizas ya vencieron:')
+    : late ? late + ' ' + plural(late, 'póliza ya venció', 'pólizas ya vencieron') + ' y ' + soon + ' ' + plural(soon, 'vence', 'vencen') + ' en ' + days + ' días o menos:'
+      : (n === 1 ? 'Esta póliza vence en ' + days + ' días o menos:' : 'Estas ' + n + ' pólizas vencen en ' + days + ' días o menos:');
+  const title = late === n ? (n === 1 ? 'Póliza vencida' : 'Pólizas vencidas') : late ? 'Pólizas vencidas y por vencer' : (n === 1 ? 'Póliza por vencer' : 'Pólizas por vencer');
+  const uid = 'pa' + Date.now().toString(36);
+  const total = round2(list.reduce((a, p) => a + p.amount, 0));
+  const ul = el('ul', { class: 'pa-list', role: 'list', id: uid + '-l' }, ...list.map((p) => el('li', { class: 'pa-item ' + (p.daysLeft < 0 ? 'late' : p.daysLeft <= 1 ? 'now' : 'soon') },
+    el('span', { class: 'pa-t' }, el('b', { text: [p.bank, p.dest].map((x) => String(x || '').trim()).filter(Boolean).join(' · ') || 'Póliza de la fila ' + p.rowNumber }),
+      el('span', { class: 'pa-m', text: dueLine(p.due, p.daysLeft) })),
+    el('span', { class: 'pa-a', text: money(p.amount) }))));
+  let dlg = null;
+  const close = () => { if (dlg) dlg.close(); };
+  const okBtn = el('button', { class: 'btn', type: 'button', text: 'Entendido', autofocus: true, onclick: close });
+  const renew = typeof opts.onRenew === 'function' ? el('button', { class: 'btn primary', type: 'button', text: 'Renovar póliza', onclick: () => { close(); opts.onRenew(); } }) : null;
+  const body = el('div', { class: 'pa' },
+    el('p', { class: 'pa-lead', id: uid + '-p', text: lead }), ul,
+    n > 1 ? el('p', { class: 'pa-total small', text: 'Total: ' + money(total) }) : null,
+    el('p', { class: 'small muted', text: 'Te lo recordaré cada vez que abras Flujo mientras falten ' + days + ' días o menos. Cuando la renueves, actualízala en «Renovar póliza» y el aviso se va solo.' }),
+    el('div', { class: 'row end pa-actions' }, okBtn, renew));
+  dlg = ctx.modal(body, { title, sheet: false });
+  try { dlg.el.setAttribute('role', 'alertdialog'); dlg.el.setAttribute('aria-describedby', uid + '-p ' + uid + '-l'); dlg.el.classList.add('pa-dlg'); } catch (e) { /* nada */ }
+  return dlg;
 }
 
 /** Dibuja la tarjeta en `host` (un <section class="card db-invest">). Devuelve los datos leídos, o null si no hay pólizas (host queda oculto). */

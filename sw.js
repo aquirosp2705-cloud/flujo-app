@@ -17,7 +17,7 @@
  */
 'use strict';
 
-const VERSION = 'v25';
+const VERSION = 'v26';
 
 /* "App shell" que se precarga al instalar. Rutas relativas a la carpeta de sw.js. Si algún archivo no existe (todavía)
  * se avisa en la consola pero la instalación sigue: lo importante es que una errata no deje la app sin service worker. */
@@ -25,10 +25,10 @@ const APP_SHELL = [
   'index.html',
   'manifest.webmanifest',
   // estilos
-  'css/app.css', 'css/grid.css', 'css/sync.css', 'css/pwa.css', 'css/ledger.css', 'css/dashboard.css', 'css/quick.css', 'css/archive.css',
+  'css/app.css', 'css/grid.css', 'css/sync.css', 'css/pwa.css', 'css/ledger.css', 'css/dashboard.css', 'css/quick.css', 'css/archive.css', 'css/rubros.css',
   // módulos
   'js/app.js', 'js/catalog.js', 'js/engine.js', 'js/export.js', 'js/format.js', 'js/formula-es.js', 'js/grid.js', 'js/pwa.js',
-  'js/settings-ui.js', 'js/store.js', 'js/sync-github.js', 'js/pairing.js', 'js/recover.js', 'js/ui.js', 'js/ledger.js', 'js/dashboard.js', 'js/close.js', 'js/invest.js', 'js/quick.js', 'js/archive.js',
+  'js/settings-ui.js', 'js/store.js', 'js/sync-github.js', 'js/pairing.js', 'js/recover.js', 'js/ui.js', 'js/ledger.js', 'js/dashboard.js', 'js/close.js', 'js/invest.js', 'js/quick.js', 'js/archive.js', 'js/rubros.js',
   // bibliotecas
   'vendor/hyperformula.full.min.js', 'vendor/ssf.js', 'vendor/xlsx.full.min.js',
   // iconos

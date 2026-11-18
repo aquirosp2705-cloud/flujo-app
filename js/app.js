@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '25';
+const VERSION = '26';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -114,7 +114,7 @@ async function boot() {
   applyTheme();
   setBoot('Cargando módulos…', 5);
   await claimSingleWindow();
-  const names = ['store', 'sync-github', 'settings-ui', 'pairing', 'recover', 'ledger', 'dashboard', 'quick', 'archive', 'export', 'pwa'];
+  const names = ['store', 'sync-github', 'settings-ui', 'pairing', 'recover', 'ledger', 'dashboard', 'quick', 'archive', 'export', 'pwa', 'invest', 'rubros'];
   const mods = await Promise.all(names.map((n) => optional('./' + n + '.js')));
   names.forEach((n, i) => { state.mods[n] = mods[i]; });
   takePairingFromUrl(earlyConnectHash);      // el código que traía la URL al abrir (ya quitado de la barra de direcciones)
@@ -282,16 +282,34 @@ async function startWithBundle(bundle) {
   window.addEventListener('online', () => { state.online = true; updatePill(); autoSync(); });
   window.addEventListener('offline', () => { state.online = false; updatePill(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') autoSync();
+    if (document.visibilityState === 'visible') { autoSync(); checkPolicyAlert(); }      // la app quedó abierta y vuelve otro día: se revisan las pólizas
     else if (document.visibilityState === 'hidden') { clearTimeout(pushTimer); autoPush(); }   // el celular se bloquea: se intenta subir lo pendiente antes de que suspenda la app
   });
-  setInterval(() => { if (document.visibilityState === 'visible') autoSync(); }, 5 * 60 * 1000);
+  setInterval(() => { if (document.visibilityState === 'visible') { autoSync(); checkPolicyAlert(); } }, 5 * 60 * 1000);   // la ventana puede quedar visible de un día a otro
+  window.addEventListener('focus', () => checkPolicyAlert());
   $('#syncPill').addEventListener('click', onPill);
   if (!state.store) toast('Sin almacenamiento local: los cambios NO se guardarán al cerrar.', { type: 'warn', ms: 8000 });
   await route();
   updatePill();
+  checkPolicyAlert();
   if (state.startConflicts && state.startConflicts.length) toast('Hay ' + state.startConflicts.length + ' hoja(s) en conflicto con GitHub: revisa Ajustes → Sincronización.', { type: 'warn', ms: 9000 });
   if (syncOn()) { autoPush(); autoArchive(); }
+}
+
+/* ------------------------------------------------------------------ aviso de pólizas por vencer */
+/** Al abrir la app (y al volver a primer plano en otro día): si alguna póliza vence en 5 días o menos, o ya venció, sale una ventana. */
+function checkPolicyAlert() {
+  const I = state.mods.invest;
+  if (!I || !I.duePolicies || !I.showDueAlert || !state.engine || state.closed || state.closing) return;
+  const today = ctx.today();
+  if (state.policyAlertDay === today) return;
+  if (document.querySelector('.modal-back')) return;          // hay otra ventana abierta (p. ej. el atajo «Anotar»): se avisa después, al cerrarla y cambiar de pantalla
+  state.policyAlertDay = today;
+  let list = [];
+  try { list = I.duePolicies(state.engine, { today }); } catch (e) { console.warn('[pólizas]', e); return; }
+  if (!list.length) return;
+  const Q = state.mods.quick;
+  I.showDueAlert(ctx, list, { onRenew: Q && Q.mountForm ? () => ctx.navigate('reg/poliza') : null });
 }
 
 /* ------------------------------------------------------------------ cerrar el programa */
@@ -476,7 +494,7 @@ function applyTheme() {
 function setTheme(t) { try { localStorage.setItem('fx-theme', t); } catch (e) { /* */ } applyTheme(); }
 
 /* ------------------------------------------------------------------ navegación */
-const TITLES = { resumen: 'Resumen', mov: 'Movimientos', reg: 'Anotar', hojas: 'Hojas', hoja: 'Hoja', archivo: 'Archivo', buscar: 'Buscar', ajustes: 'Ajustes' };
+const TITLES = { resumen: 'Resumen', mov: 'Movimientos', reg: 'Anotar', hojas: 'Hojas', hoja: 'Hoja', archivo: 'Archivo', buscar: 'Buscar', ajustes: 'Ajustes', rubros: 'Ingresos y egresos' };
 function parseHash() {
   const h = location.hash.replace(/^#\/?/, ''); const [path, qs] = h.split('?'); const parts = path.split('/');
   return { name: parts[0] || 'resumen', arg: parts.slice(1).join('/') || null, q: new URLSearchParams(qs || '') };
@@ -499,7 +517,8 @@ async function route() {
   const view = el('div', { class: 'view', style: { display: 'contents' } }); host.append(view);   // contenedor propio de esta ruta
   const key = SCREENS[name] ? name : 'resumen';
   $('#app').classList.toggle('route-hoja', key === 'hoja' || (key === 'archivo' && !!arg) || (key === 'resumen' && !state.mods.dashboard));   // el visor del archivo también es una hoja: barra superior compacta
-  document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === (key === 'hoja' || key === 'archivo' ? 'hojas' : key)));
+  const navKey = key === 'hoja' || key === 'archivo' ? 'hojas' : key === 'rubros' && !document.querySelector('.side [data-nav="rubros"]') ? 'resumen' : key;
+  document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === navKey || (key === 'rubros' && a.dataset.nav === 'resumen' && !a.closest('.side'))));
   $('#title').textContent = TITLES[key];
   document.title = TITLES[key] + ' · Flujo';
   let obj = null;
@@ -507,6 +526,7 @@ async function route() {
   catch (e) { console.error(e); view.append(el('div', { class: 'screen' }, el('div', { class: 'card' }, el('h2', { text: 'Algo salió mal' }), el('p', { class: 'muted', text: String(e && e.message || e) })))); }
   if (token !== routeToken) { try { obj && obj.destroy && obj.destroy(); } catch (e) { /* */ } view.remove(); return; }   // el usuario ya navegó a otra pantalla
   state.screenObj = obj;
+  setTimeout(checkPolicyAlert, 0);                                     // aviso de pólizas pendiente (si se difirió por otra ventana); una vez por día
 }
 
 /* ------------------------------------------------------------------ pantallas */
@@ -687,6 +707,16 @@ const SCREENS = {
     setTimeout(() => input.focus(), 50);
   },
   async ajustes(host) { return screenAjustes(host); },
+  /** Ingresos y egresos del mes por rubro: #/rubros = mes de hoy · #/rubros/AAAA-MM (js/rubros.js) */
+  async rubros(host, arg, q) {
+    const R = state.mods.rubros;
+    const wrap = el('div', { class: 'screen' }); host.append(wrap);
+    if (!R || !R.mount) {
+      wrap.append(el('div', { class: 'card' }, el('h2', { text: 'Ingresos y egresos' }), el('p', { class: 'muted', text: 'Este resumen no está disponible en esta versión.' })));
+      return {};
+    }
+    return R.mount(wrap, ctx, arg, q);
+  },
 };
 
 async function openGridIn(host, sidOrName, q) {

@@ -15,6 +15,7 @@ No necesita Excel, Microsoft 365 ni ningún plan de pago: la app es gratuita (Gi
 | **Anotar** (el botón +) | Lista de tus hojas (cuentas y tarjetas): eliges una y **se abre esa hoja en la primera fila libre**, lista para escribir el movimiento. Es la misma lista que sale al pulsar «+ Movimiento». |
 | **Hojas** | Las hojas de tu libro, con las mismas fórmulas: edita celdas, copia y pega, rellena hacia abajo, deshaz. |
 | **Archivo por mes** (dentro de Hojas) | Una copia de TODAS tus hojas tal como estaban al cerrar cada mes (con los valores que veías, sin fórmulas). Se consulta en solo lectura, con selector de hoja y botón para descargar el Excel. «Guardar el estado de hoy» crea la copia del mes a mano; al cerrar el mes se guarda sola. Se guarda en el dispositivo y se sube a `archivo/AAAA-MM.json.gz` de tu repositorio privado, así la ves también desde el celular. Si un mismo mes tiene dos versiones distintas (la de este dispositivo y otra en GitHub), la app no pisa ninguna: puedes verlas y elegir cuál conservar, y un reemplazo hecho sin conexión tampoco pisa lo que otro dispositivo haya cambiado mientras tanto. Los archivos no van dentro del respaldo (.json): ya están en GitHub. |
+| **Ingresos y egresos** (botón del Resumen) | Lo que entró y salió en un mes en tus bancos y tarjetas, **agrupado por rubro**, con los movimientos de cada rubro, flechas para ir de un mes a otro y **«Descargar Excel»** (hojas Resumen y Detalle). Sale sola al terminar «Cerrar mes». |
 | **Buscar** | Busca un texto o valor en todas las hojas a la vez. |
 | **Ajustes** | Sincronización con GitHub, **código de conexión** para enlazar otro dispositivo, exportar a Excel (.xlsx), respaldo (.json), tema claro/oscuro, instalar la app. |
 
@@ -23,6 +24,8 @@ Al instalar la app (Android, Windows, Mac), mantener pulsado o hacer clic derech
 ### Cerrar el mes
 
 En el Resumen, **«Cerrar mes»** hace lo que hacías a mano en CONSOL: guarda el archivo del mes (copia de todas las hojas), fija como valores la columna del mes que se cierra, abre la columna del mes siguiente, pasa «Mes anterior» al mes cerrado (bancos y patrimonio), actualiza la fecha de CONSOL y prepara la fila de resumen de la lista de ingresos. **Al cerrar diciembre abre el año nuevo** como los anteriores: archiva el año como valores, reinicia el bloque del año, corre el comparativo de diciembres y crea el resumen del año nuevo.
+
+Al terminar sale el **resumen de ingresos y egresos del mes por rubro** (ver abajo, v26).
 
 Antes de escribir nada muestra una **vista previa** en lenguaje sencillo, con avisos y la lista celda por celda (antes → después). Es una sola operación: si algo no cuadra no se cambia nada, y después puedes usar **«Deshacer»** (también desde el Resumen, aunque hayas cerrado la app). Se puede cerrar cualquier día del mes; si todavía no termina, la vista previa lo avisa y pide confirmar.
 
@@ -143,6 +146,29 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   para apagarla a propósito) y revisa en bytes que ningún archivo lleve un token en claro.
 - Ojo: todas las apps de `<usuario>.github.io` comparten el mismo origen (almacenamiento del navegador y llavero). Para
   aislar Flujo del todo convendría servirla desde un dominio propio o una cuenta de GitHub dedicada.
+
+## Aviso de pólizas y resumen por rubro (v26)
+- **Aviso de pólizas**: al abrir la app (y si queda abierta y vuelve a primer plano otro día), si una póliza de la hoja de
+  pólizas vence en **5 días o menos** o ya venció, sale una ventana con cada póliza (banco · destino, monto, «Vence dd/mm/aaaa
+  (en N días)») y el total, con «Entendido» y «Renovar póliza». Usa la misma lista que el formulario «Renovar póliza»
+  (`listPolicies`); al renovarla el aviso desaparece solo (`duePolicies` / `showDueAlert` en js/invest.js).
+- **Ingresos y egresos del mes** (js/rubros.js, `summarizeMonth`): cuentas bancarias (concepto = descripción), tarjeta de
+  consumos (rubro = columna B; si C es un número es la cuota de una compra diferida) y la hoja de tarjeta + cuenta de ahorros
+  (la cuenta se lee como un banco; la zona de la tarjeta no tiene fechas: los consumos de un mes son los anotados después del
+  pago del mes anterior y hasta el pago de ese mes, ubicando los pagos por monto en la cuenta; lo anotado después del pago va
+  al mes siguiente). Cada fila cuenta en el mes del **bloque** donde está anotada (`assignMonths`; también fechas escritas como
+  texto: «nov26», «mzo-27»): una fila con la fecha de otro mes u otro año (error de tipeo, cuota con el mes de compra) o sin
+  fecha cuenta en su bloque y sale en «Para revisar»; así ninguna fila cae en dos meses. Un ajuste grande de la tarjeta
+  (columna E, más de $10) va a «Ajustes de la tarjeta» y no deforma el rubro de la fila.
+  **No suman** (para no contar dos veces): pagos de tarjeta desde un banco, dinero entre tus cuentas (palabras como «de bol»,
+  «a produb» o el mismo monto que sale de una y entra en otra) y pólizas. Comisiones pequeñas pegadas a un egreso van a
+  «Comisiones bancarias». Pantalla `#/rubros/AAAA-MM`; ventana automática al cerrar el mes; Excel con hojas Resumen y Detalle.
+- El aviso de pólizas espera si al abrir hay otra ventana (por ejemplo, el atajo «Anotar») y se revisa también cada 5 minutos
+  y al volver el foco, por si la app queda abierta de un día para otro.
+- Pruebas: `test/rubros-test.html` (127 con 8 meses de datos reales: `?data=` apunta a una copia local; incluye casos de
+  `assignMonths`) y `_e2e/rubros_e2e.py` (33: aviso al abrir con el reloj en 03/12, pantalla, cierre de noviembre con la
+  ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
+  `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
 ## Excel con formato (v21)
 «Descargar Excel» (y el Excel de un mes archivado) sale con negrita, cursiva, subrayado, tachado, tamaño y color de

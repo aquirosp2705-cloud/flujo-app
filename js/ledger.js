@@ -393,6 +393,10 @@ export function listMovements(engine, id, { limit = 50, before = null } = {}) {
   return out;
 }
 
+/** Para el resumen de ingresos y egresos (rubros.js): la fila r leída como movimiento (null si no lo es) y la última fila con datos. */
+export function readMovement(engine, id, r) { return readRow(engine, need(id), r); }
+export function lastMovementRow(engine, id) { const L = need(id); return lastEntryRow(engine, L, sheetOf(engine, L)); }
+
 const DESC_WINDOW = 1800;   // filas hacia atrás que se miran para sugerir
 const DESC_RECENT = 300;    // las últimas filas pesan más: lo que se usa hoy es lo que se vuelve a teclear
 /** Índice de descripciones usadas para autocompletar. Puntaje = 3 × usos en las últimas 300 filas

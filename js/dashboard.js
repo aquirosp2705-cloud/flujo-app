@@ -418,7 +418,7 @@ function sv(tag, attrs = {}, ...kids) {
 const ICONS = {
   up: 'M5 1.5 9.3 8.5H.7z', down: 'M5 8.5.7 1.5h8.6z', flat: 'M1 5h8',
   plus: 'M12 5v14M5 12h14', search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4', sheet: 'M3 4h18v16H3zM3 10h18M3 15h18M9 4v16M15 4v16',
-  lock: 'M5 4h14v16H5zM9 2v4M15 2v4M5 9h14M9 14.5l2 2 4-4.5', edit: 'M4 20l4-1 11-11-3-3L5 16zM14 6l3 3', chev: 'M9 6l6 6-6 6', check: 'M5 12.5l4.5 4.5L19 7', close: 'M6 6l12 12M18 6L6 18',
+  lock: 'M5 4h14v16H5zM9 2v4M15 2v4M5 9h14M9 14.5l2 2 4-4.5', bars: 'M4 20V11M10 20V5M16 20v-6M21 20H3', edit: 'M4 20l4-1 11-11-3-3L5 16zM14 6l3 3', chev: 'M9 6l6 6-6 6', check: 'M5 12.5l4.5 4.5L19 7', close: 'M6 6l12 12M18 6L6 18',
 };
 function icon(name, size = 16) {
   const filled = name === 'up' || name === 'down';
@@ -731,6 +731,7 @@ export function closePreviewBody(plan, info = {}) {
     plan.vars && plan.vars.rowNextExisting ? `La lista de ingresos de ${next} ya estaba preparada${rowTxt}.` : `Se prepara la lista de ingresos de ${next}${rowTxt}.`,
   ];
   if (plan.yearEnd) steps.push(`Se abre el año ${plan.next.year}: ${plan.month.year} queda archivado como valores en CONSOL${plan.vars && plan.vars.d ? ` (filas ${plan.vars.d} a ${plan.vars.CH})` : ''}, el patrimonio mensual empieza de nuevo en enero y se compara con ${plan.month.year}.`);
+  if (info.summary !== false) steps.push(`Al terminar verás el resumen de ingresos y egresos de ${label} por rubro (bancos y tarjetas), con opción de descargarlo en Excel.`);
   root.append(el('p', { class: 'db-cm-lead', text: 'Se actualizan varias partes de CONSOL de una sola vez. Si algo no cuadra, no se cambia nada, y después puedes deshacerlo.' }));
   const ol = el('ol', { class: 'db-cm-steps' });
   for (const t of steps) ol.append(el('li', {}, el('span', { text: t })));
@@ -785,7 +786,7 @@ function ledgerEntry(L, id) {
  * Monta el Resumen en `host`.
  * @param {HTMLElement} host
  * @param {object} ctx  contexto de la app (engine, changed, navigate, openSheet, toast, confirm, today, catalog…)
- * @param {{ledger?:object|false, archiveTimeoutMs?:number}} opts  opts.ledger inyecta el módulo de movimientos (pruebas); false = no cargarlo; archiveTimeoutMs = espera máxima al guardar el archivo del mes (60 000 por omisión)
+ * @param {{ledger?:object|false, archiveTimeoutMs?:number, closeSummary?:boolean}} opts  opts.ledger inyecta el módulo de movimientos (pruebas); false = no cargarlo; archiveTimeoutMs = espera máxima al guardar el archivo del mes (60 000 por omisión); closeSummary:false = no abrir el resumen de ingresos y egresos al terminar el cierre (pruebas)
  * @returns {{destroy():void, refresh():void}}
  */
 export function mount(host, ctx, opts = {}) {
@@ -925,6 +926,7 @@ export function mount(host, ctx, opts = {}) {
       b('primary', 'plus', 'Movimiento', () => ctx.navigate('mov?nuevo=1'), { 'aria-label': 'Agregar movimiento' }),
       b('', 'sheet', 'Ver hoja ' + (s.ok ? s.sheetName : 'CONSOL'), () => ctx.openSheet(SID)),
       b('', 'search', 'Buscar', () => ctx.navigate('buscar')),
+      b('', 'bars', 'Ingresos y egresos', () => ctx.navigate('rubros'), { title: 'Lo que entró y salió este mes en bancos y tarjetas, por rubro' }),
       b('', 'lock', 'Cerrar mes', onCloseMonth, { disabled: !s.ok || s.empty, title: 'Cierra el mes: guarda el archivo, fija los valores y abre el mes siguiente' }));
     if (S.lastClose) secActions.append(el('button', { class: 'db-lastclose', type: 'button', onclick: undoLastClose }, `Deshacer el último cierre (${S.lastClose.label})`));
   }
@@ -1003,7 +1005,7 @@ export function mount(host, ctx, opts = {}) {
     let busy = false, dlg = null, gone = false;
     const err = el('p', { class: 'db-err small', role: 'alert', hidden: true });
     const status = el('p', { class: 'db-cm-status small muted', role: 'status', hidden: true });
-    const body = closePreviewBody(plan, { archive: arch, extra, onChange: () => sync() });
+    const body = closePreviewBody(plan, { archive: arch, extra, onChange: () => sync(), summary: opts.closeSummary !== false });
     const cancel = el('button', { class: 'btn', type: 'button', text: plan.ok ? 'Cancelar' : 'Entendido', onclick: () => dlg && dlg.close() });
     const go = plan.ok ? el('button', { class: 'btn primary', type: 'button', text: 'Cerrar ' + monthName(plan.month.label), onclick: run }) : null;
     const see = plan.ok ? null : el('button', { class: 'btn', type: 'button', text: 'Ver hoja ' + (D && D.summary.ok ? D.summary.sheetName : 'CONSOL'), onclick: () => { if (dlg) dlg.close(); if (ctx.openSheet) ctx.openSheet(SID); } });
@@ -1014,7 +1016,7 @@ export function mount(host, ctx, opts = {}) {
       busy = true; sync(); err.hidden = true;
       const res = await doClose(plan, { onStatus: (t) => { status.textContent = t; status.hidden = false; } });
       busy = false;
-      if (res.ok) { S.closing = false; if (dlg) dlg.close(); return; }
+      if (res.ok) { S.closing = false; if (dlg) dlg.close(); showMonthSummary(plan); return; }
       if (gone) { S.closing = false; notify('error', res.error, 9000); return; }       // cerraron el diálogo mientras se trabajaba: el error sale como aviso
       status.hidden = true; err.textContent = res.error; err.hidden = false; sync();
       try { err.scrollIntoView({ block: 'nearest' }); } catch (e) { /* nada */ }
@@ -1023,6 +1025,13 @@ export function mount(host, ctx, opts = {}) {
     sync();
     // al abrir, el foco va a «Cancelar» (la opción segura) y el diálogo se ve desde arriba (el enfoque automático lo dejaría en la casilla, al final)
     try { requestAnimationFrame(() => { try { cancel.focus({ preventScroll: true }); if (dlg && dlg.body) dlg.body.scrollTop = 0; } catch (e) { /* nada */ } }); } catch (e) { /* nada */ }
+  }
+  /** Al terminar el cierre: ventana con los ingresos y egresos del mes cerrado, por rubro (js/rubros.js). */
+  function showMonthSummary(plan) {
+    if (!plan || !plan.month || !plan.month.key || typeof ctx.modal !== 'function' || opts.closeSummary === false) return;
+    import('./rubros.js').then((R) => {
+      if (R && R.openSummaryDialog) R.openSummaryDialog(ctx, plan.month.key, { lead: `Cerraste ${plan.month.label}. Esto entró y salió en el mes en tus bancos y tarjetas, por rubro.`, onClose: () => { if (!S.destroyed && S.undoArgs && S.lastClose) { setUndo(...S.undoArgs); if (D) renderBanners(); } } });
+    }).catch((e) => console.warn('[cierre] resumen por rubros no disponible:', e && e.message));
   }
   /** Guarda el archivo del mes (si existe el módulo) y SOLO entonces escribe el cierre. Devuelve {ok} o {ok:false, error}. */
   async function doClose(plan, { onStatus }) {
@@ -1049,7 +1058,8 @@ export function mount(host, ctx, opts = {}) {
       if (!S.destroyed) {
         const mn = cap(monthName(plan.month.label));
         const extras = archived && ctx.navigate ? [{ text: 'Ver archivo', run: () => ctx.navigate('archivo/' + plan.month.key) }] : [];
-        setUndo(`${mn} cerrado.${archived ? ' Archivo guardado.' : ''}${archiveConflict ? ' En GitHub ya había otra versión de ese mes y no se pisó: elige cuál conservar en Hojas → Archivo por mes.' : ''}${plan.yearEnd ? ` Ya está abierto ${plan.next.year}.` : ''}`, undoLastClose, { custom: true, extras, ms: 120000 });
+        S.undoArgs = [`${mn} cerrado.${archived ? ' Archivo guardado.' : ''}${archiveConflict ? ' En GitHub ya había otra versión de ese mes y no se pisó: elige cuál conservar en Hojas → Archivo por mes.' : ''}${plan.yearEnd ? ` Ya está abierto ${plan.next.year}.` : ''}`, undoLastClose, { custom: true, extras, ms: 120000 }];
+        setUndo(...S.undoArgs);
       }
       afterWrite();
       notify('ok', `${cap(monthName(plan.month.label))} cerrado`);

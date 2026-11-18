@@ -70,3 +70,9 @@
 .fxg-pal { position: fixed; z-index: 1000; display: grid; grid-template-columns: repeat(4, 40px); gap: 6px; padding: 8px; background: #fff; border: 1px solid #c9ced2; border-radius: 10px; box-shadow: 0 6px 18px rgba(0,0,0,.18); }
 .fxg-pal button { width: 40px; height: 34px; border: 1px solid #b9b9b9; border-radius: 6px; cursor: pointer; padding: 0; font-size: 11px; background: #fff; color: #1d2b2e; }
 .fxg-pal button:last-child { grid-column: span 4; width: auto; height: 32px; font-size: 13px; }
+/* bordes: ícono del botón (una celda con la raya de abajo marcada) y menú con dibujo + texto */
+.fxg-tools .fxg-bdi { display: inline-block; width: 13px; height: 11px; border: 1px dashed #9aa5aa; border-bottom: 2px solid #1d2b2e; vertical-align: -1px; }
+.fxg-pal.fxg-bdm { grid-template-columns: 1fr; gap: 2px; padding: 6px; min-width: 210px; }
+.fxg-pal.fxg-bdm button, .fxg-pal.fxg-bdm button:last-child { grid-column: auto; display: flex; align-items: center; gap: 10px; width: 100%; height: auto; min-height: 40px; padding: 6px 10px; border: 0; border-radius: 7px; font-size: 14px; text-align: left; background: #fff; }
+.fxg-pal.fxg-bdm button:hover, .fxg-pal.fxg-bdm button:focus-visible { background: #eef3f4; outline: none; }
+.fxg-pal.fxg-bdm svg { flex: none; }

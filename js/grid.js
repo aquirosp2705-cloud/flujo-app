@@ -7,6 +7,7 @@
  * Teclado: flechas, Shift+flechas, Ctrl+flechas, Tab/Enter, Inicio/Fin, RePág/AvPág, F2, Supr, Ctrl+C/X/V/Z/Y/D/R/A/F.
  * Ratón: clic/arrastre, doble clic = editar, asa de relleno (cuadrito azul) arrastrando hacia abajo/derecha, borde de encabezado = ancho.
  * Táctil: tocar = seleccionar, tocar de nuevo = editar; barra de herramientas con deshacer, copiar, pegar, rellenar, zoom, ir al final.
+ * Formato: negrita, color de letra, relleno y bordes (raya abajo, raya arriba, arriba y abajo, todos, contorno, sin bordes); se deshace con Ctrl+Z.
  */
 import { cellKey as K, colLetter, addrToA1, a1ToAddr } from './engine.js';
 import { fmtCell, styleCss, editText, parseInput, isDateFormat } from './format.js';
@@ -66,6 +67,7 @@ export class SheetGrid {
         <button data-act="bold" class="fxg-fmt" title="Negrita (Ctrl+B)"><b>N</b></button>
         <button data-act="fc" class="fxg-fmt" title="Color de letra"><span class="fxg-fc">A</span> ▾</button>
         <button data-act="bg" class="fxg-fmt" title="Color de relleno"><span class="fxg-bg"></span> ▾</button>
+        <button data-act="bd" class="fxg-fmt" title="Bordes: raya abajo, raya arriba, contorno…" aria-label="Bordes" aria-haspopup="menu"><span class="fxg-bdi" aria-hidden="true"></span> ▾</button>
         <button data-act="unfmt" class="fxg-fmt" title="Quitar negrita y colores de lo seleccionado">Sin color</button>
         <button data-act="end" title="Ir al último dato">Ir al final ⇲</button>
         <button data-act="find" title="Buscar (Ctrl+F)">Buscar</button>
@@ -171,7 +173,7 @@ export class SheetGrid {
     if (this.tools) {
       for (const b of this.tools.querySelectorAll('button[data-act]')) {
         const act = b.dataset.act;
-        b.hidden = ro && (act === 'undo' || act === 'redo' || act === 'paste' || act === 'fill' || act === 'clear' || act === 'bold' || act === 'fc' || act === 'bg' || act === 'unfmt' || (act === 'find' && !this.opts.onFind));
+        b.hidden = ro && (act === 'undo' || act === 'redo' || act === 'paste' || act === 'fill' || act === 'clear' || act === 'bold' || act === 'fc' || act === 'bg' || act === 'bd' || act === 'unfmt' || (act === 'find' && !this.opts.onFind));
       }
     }
   }
@@ -829,6 +831,89 @@ export class SheetGrid {
     setTimeout(() => document.addEventListener('pointerdown', away, true), 0);
   }
 
+  /**
+   * Bordes de lo seleccionado, como en Excel (rayas finas, las mismas que ya traía el libro):
+   *   'b' raya abajo (borde inferior del rango) · 't' raya arriba (borde superior) · 'tb' arriba y abajo · 'all' todos los bordes ·
+   *   'box' contorno (solo el borde exterior) · 'none' sin bordes (quita también la raya de la celda vecina que toca lo seleccionado).
+   * Se guardan en el estilo de cada celda (bd = lados 't', 'b', 'l', 'r') y se deshacen con Deshacer o Ctrl+Z.
+   */
+  _borders(kind) {
+    if (this.opts.readOnly || !this.sh) return;
+    const R = this._rect();
+    if ((R.r1 - R.r0 + 1) * (R.c1 - R.c0 + 1) > 300000) { this._toast('La selección es demasiado grande para darle formato'); return; }
+    const prev = [], seen = new Set();
+    const setBd = (r, c, add, del) => {
+      if (r < 0 || c < 0) return;
+      const s = this.sh.styleAt(r, c), st = this.eng.styles[s] || {};
+      const cur = typeof st.bd === 'string' ? st.bd : '';
+      const next = 'tblr'.split('').filter((ch) => (cur.includes(ch) && !del.includes(ch)) || add.includes(ch)).join('');
+      if (next === 'tblr'.split('').filter((ch) => cur.includes(ch)).join('')) return;
+      const ns = this.eng.deriveStyle(s, { bd: next || undefined });
+      if (ns === s) return;
+      const k = r + ',' + c;
+      if (!seen.has(k)) { seen.add(k); prev.push([r, c, s]); }
+      this.sh.setStyle(r, c, ns);
+    };
+    for (let r = R.r0; r <= R.r1; r++) for (let c = R.c0; c <= R.c1; c++) {
+      const top = r === R.r0, bot = r === R.r1, left = c === R.c0, right = c === R.c1;
+      if (kind === 'b') { if (bot) setBd(r, c, 'b', ''); }
+      else if (kind === 't') { if (top) setBd(r, c, 't', ''); }
+      else if (kind === 'tb') { if (top || bot) setBd(r, c, (top ? 't' : '') + (bot ? 'b' : ''), ''); }
+      else if (kind === 'all') setBd(r, c, 'tblr', '');
+      else if (kind === 'box') { if (top || bot || left || right) setBd(r, c, (top ? 't' : '') + (bot ? 'b' : '') + (left ? 'l' : '') + (right ? 'r' : ''), ''); }
+      else if (kind === 'none') {
+        setBd(r, c, '', 'tblr');
+        if (top) setBd(r - 1, c, '', 'b');
+        if (bot) setBd(r + 1, c, '', 't');
+        if (left) setBd(r, c - 1, '', 'r');
+        if (right) setBd(r, c + 1, '', 'l');
+      }
+    }
+    if (!prev.length) return;
+    this._pushHist({ fmt: prev });
+    this._afterFormat();
+  }
+  /** Menú «Bordes» junto al botón (como la paleta de colores). */
+  _borderMenu() {
+    if (this.opts.readOnly) return;
+    if (this._pal) { const same = this._pal.dataset.kind === 'bd'; this._pal.remove(); this._pal = null; if (same) return; }
+    const icon = (sides, inner) => '<svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" focusable="false">' +
+      '<rect x="3" y="3" width="14" height="14" fill="none" stroke="#b5bdc1" stroke-dasharray="2 2"/>' +
+      (inner ? '<path d="M10 3v14M3 10h14" stroke="#1d2b2e" stroke-width="1.6"/>' : '') +
+      (sides.includes('t') ? '<path d="M2 3h16" stroke="#1d2b2e" stroke-width="2.2"/>' : '') +
+      (sides.includes('b') ? '<path d="M2 17h16" stroke="#1d2b2e" stroke-width="2.2"/>' : '') +
+      (sides.includes('l') ? '<path d="M3 2v16" stroke="#1d2b2e" stroke-width="2.2"/>' : '') +
+      (sides.includes('r') ? '<path d="M17 2v16" stroke="#1d2b2e" stroke-width="2.2"/>' : '') + '</svg>';
+    const items = [['b', 'Raya abajo', icon('b')], ['t', 'Raya arriba', icon('t')], ['tb', 'Raya arriba y abajo', icon('tb')],
+      ['all', 'Todos los bordes', icon('tblr', true)], ['box', 'Contorno', icon('tblr')], ['none', 'Sin bordes', icon('')]];
+    const menu = document.createElement('div');
+    menu.className = 'fxg-pal fxg-bdm'; menu.dataset.kind = 'bd'; menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Bordes');
+    const close = () => { menu.remove(); if (this._pal === menu) this._pal = null; document.removeEventListener('pointerdown', away, true); };
+    for (const [kind, label, svg] of items) {
+      const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem'); b.dataset.bd = kind;
+      b.innerHTML = svg + '<span>' + label + '</span>';
+      b.addEventListener('click', () => { close(); this._borders(kind); this._focusKb(); });
+      menu.append(b);
+    }
+    menu.addEventListener('keydown', (e) => {
+      const list = [...menu.querySelectorAll('button')], i = list.indexOf(document.activeElement);
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); this._focusKb(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); list[(i + 1) % list.length].focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); list[(i - 1 + list.length) % list.length].focus(); }
+    });
+    const btn = this.tools && this.tools.querySelector('button[data-act="bd"]');
+    const rc = btn ? btn.getBoundingClientRect() : { left: 10, bottom: 60 };
+    menu.style.left = Math.max(6, Math.min(rc.left, window.innerWidth - 230)) + 'px';
+    menu.style.top = (rc.bottom + 4) + 'px';
+    document.body.append(menu); this._pal = menu;
+    const away = (e) => {
+      if (!menu.isConnected) { document.removeEventListener('pointerdown', away, true); return; }
+      if (!menu.contains(e.target) && !(btn && btn.contains(e.target))) close();
+    };
+    setTimeout(() => document.addEventListener('pointerdown', away, true), 0);
+    const first = menu.querySelector('button'); if (first) try { first.focus({ preventScroll: true }); } catch (e) { /* nada */ }
+  }
+
   /* ----------------------------------------------------------------- rellenar */
   _fillDown() {
     if (this.opts.readOnly) return;
@@ -943,6 +1028,7 @@ export class SheetGrid {
     if (act === 'clear') return this._clearSel();
     if (act === 'bold') return this._toggleBold();
     if (act === 'fc' || act === 'bg') return this._palette(act);
+    if (act === 'bd') return this._borderMenu();
     if (act === 'unfmt') return this._format({ b: undefined, fc: undefined, bg: undefined });
   }
   _toast(msg) { if (this.opts.onToast) this.opts.onToast(msg); else { this.stL.textContent = msg; clearTimeout(this._tt); this._tt = setTimeout(() => this._updateStatus(), 2500); } }

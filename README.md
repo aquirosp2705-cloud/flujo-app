@@ -170,6 +170,13 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Bordes en la hoja (v27)
+En la barra de la hoja, junto a los colores, el botón **Bordes ▾** (también a la vista en el celular) pone rayas finas como en
+Excel sobre lo seleccionado: **Raya abajo** (borde inferior del rango), **Raya arriba**, **Raya arriba y abajo**, **Todos los
+bordes**, **Contorno** (solo el borde exterior) y **Sin bordes** (quita también la raya de la celda vecina que toca lo
+seleccionado). Se guarda en el estilo de cada celda (`bd`), se deshace con ↶ o Ctrl+Z, se sincroniza y sale en el Excel
+descargado. En solo lectura (visor del archivo mensual) el botón no aparece. Prueba: `_e2e/bordes_e2e.py` (24).
+
 ## Excel con formato (v21)
 «Descargar Excel» (y el Excel de un mes archivado) sale con negrita, cursiva, subrayado, tachado, tamaño y color de
 letra, relleno, bordes, alineación, ajuste de texto y sangría, además de los formatos de número. SheetJS Community no

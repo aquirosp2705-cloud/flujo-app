@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '24';
+const VERSION = '25';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -214,7 +214,7 @@ function showOnboarding(resolve) {
     iosHelp ? el('div', { class: 'banner', style: { textAlign: 'left', marginTop: '14px' }, text: 'En iPhone o iPad: mejor toca Compartir → «Añadir a pantalla de inicio» y abre Flujo desde su ícono (Safari borra los datos de las páginas que no están instaladas). Si entras aquí y luego la instalas, la app del ícono empieza vacía: ahí vuelves a escribir tu clave.' }) : null,
     el('p', { class: 'muted small', style: { textAlign: 'left', margin: '14px 0 0' }, text: 'Si ya usabas Flujo en este navegador y ves esta pantalla, es posible que el navegador haya borrado los datos de la app. Tus datos siguen a salvo en GitHub: conecta tu cuenta y se recuperan.' }),
     canSync ? joinHost : null,
-    canSync ? el('p', { class: 'muted small', style: { margin: '18px 0 0' }, text: '¿No tienes un código? Hay otras formas de traer tus datos (con más pasos):' }) : null,
+    canSync ? el('p', { class: 'muted small', style: { margin: '18px 0 0' }, text: '¿No puedes entrar así? Hay otras formas de traer tus datos (con más pasos):' }) : null,
     el('div', { class: 'row', style: { justifyContent: 'center', marginTop: canSync ? '10px' : '12px' } },
       el('button', { class: canSync ? 'btn' : 'btn primary', text: 'Conectar con mi cuenta de GitHub (más pasos)', onclick: (e) => { gh.hidden = !gh.hidden; e.currentTarget.setAttribute('aria-expanded', String(!gh.hidden)); if (!gh.hidden) gh.scrollIntoView({ behavior: 'smooth', block: 'start' }); } }),
       (() => {

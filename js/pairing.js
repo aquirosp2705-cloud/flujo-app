@@ -286,7 +286,7 @@ export async function openCode(code, key) {
     let last = new PairingError('FORMAT', MSG2.garbled);
     for (const c of cands) {
       try { return await openPersonalCode(c, key); }
-      catch (e) { if (!(e instanceof PairingError) || (e.code !== 'FORMAT' && e.code !== 'KEY')) throw e; last = e; }
+      catch (e) { if (!(e instanceof PairingError) || (e.code !== 'FORMAT' && e.code !== 'KEY')) throw e; if (e.code === 'KEY' || last.code !== 'KEY') last = e; }
     }
     throw last;
   }
@@ -319,8 +319,9 @@ const PREFIX2 = 'FLUJO2.';
 const AAD2 = new TextEncoder().encode('flujoweb-clave-unica-v2');
 export const PERSONAL_ITERATIONS = 2000000;
 const ITER2_MIN = 600000, ITER2_MAX = 10000000;
-export const PASSWORD_MIN = 12;
+export const PASSWORD_MIN = 16;            // con al menos 3 palabras; una sola «palabra» necesita PASSWORD_ONE_WORD
 const PASSWORD_MAX = 128;
+export const PASSWORD_ONE_WORD = 20;
 export const ACCESS_FORMAT = 'flujo-acceso-1';
 
 const MSG2 = {
@@ -330,11 +331,27 @@ const MSG2 = {
   short: 'Muy corta: usa al menos ' + PASSWORD_MIN + ' letras o números. Lo mejor es una frase de 3 o 4 palabras que no tenga que ver contigo.',
   long: 'Muy larga: usa como máximo ' + PASSWORD_MAX + ' caracteres.',
   digits: 'Solo números es fácil de adivinar: usa palabras (por ejemplo una frase de 3 o 4 palabras).',
-  weak: 'Es demasiado fácil de adivinar (repite o sigue en orden los mismos caracteres). Usa una frase de 3 o 4 palabras.'
+  weak: 'Es demasiado fácil de adivinar (repite o sigue en orden los mismos caracteres). Usa una frase de 3 o 4 palabras.',
+  words: 'Usa al menos 3 palabras separadas por espacios (o 20 letras seguidas). Lo mejor: 4 palabras sin relación entre sí, que no tengan que ver contigo.',
+  common: 'Es demasiado fácil de adivinar: evita palabras como contraseña, clave, Flujo, nombres de ciudades, «te amo» o números seguidos. Usa 4 palabras sin relación entre sí.',
+  invalid: 'Tu clave abrió el acceso, pero lo que contiene no es válido. Crea la clave única de nuevo en el computador donde usas Flujo.',
+  unsupported: 'Este navegador no permite usar la clave única. Abre Flujo en un navegador actualizado (Safari, Chrome, Edge o Firefox).'
 };
 
-/** La clave tal como cuenta: sin tildes ni diacríticos («ñ»→«n»), en minúsculas y sin espacios ni caracteres invisibles. */
+/** Puntuación «inteligente» (iOS, Word): comillas curvas, primas y rayas → su forma simple. */
+const TYPO = [[/[\u2018\u2019\u201A\u201B\u2032\u0060]/gu, "'"], [/[\u201C\u201D\u201E\u201F\u2033]/gu, '"'], [/[\u2010-\u2015\u2212]/gu, '-']];
+
+/** La clave tal como cuenta: sin tildes ni diacríticos («ñ»→«n»), en minúsculas, con la puntuación tipográfica unificada
+ *  (’ → ', “ ” → ", — – → -) y sin espacios ni caracteres invisibles o de formato. */
 export function normalizePassword(text) {
+  let s = String(text == null ? '' : text).normalize('NFKD').replace(/\p{M}+/gu, '');
+  for (const [rx, to] of TYPO) s = s.replace(rx, to);
+  s = s.toLowerCase();
+  return s.replace(/[\s\p{Cf}]+/gu, '');
+}
+
+/** La normalización de v22 (sin unificar la puntuación): al abrir se prueba también, para que ningún acceso ya creado deje de abrir. */
+function normalizePasswordV22(text) {
   let s = String(text == null ? '' : text).normalize('NFKD').replace(/\p{M}+/gu, '');
   s = s.toLowerCase();
   return s.replace(/[\s­​-‍⁠﻿]+/gu, '');
@@ -349,11 +366,21 @@ export function passwordProblem(text) {
   if (chars.length > PASSWORD_MAX) return MSG2.long;
   if (/^\d+$/.test(s)) return MSG2.digits;
   if (new Set(chars).size < 5) return MSG2.weak;
+  const words = String(text).trim().split(/\s+/).filter((w) => normalizePassword(w).length >= 2);
+  if (words.length < 3 && chars.length < PASSWORD_ONE_WORD) return MSG2.words;
+  let rest = s;                                                    // sin palabras de contraseña típicas ni números seguidos, ¿queda algo?
+  for (const w of COMMON) rest = rest.split(w).join('');
+  rest = rest.replace(/\d{3,}/g, '');
+  if ([...rest].length < 10) return MSG2.common;
   let seq = true;
   for (let i = 1; i < chars.length && seq; i++) seq = Math.abs(chars[i].codePointAt(0) - chars[i - 1].codePointAt(0)) <= 1;
   if (seq) return MSG2.weak;
   return null;
 }
+
+/** Trozos típicos de contraseñas fáciles (ya normalizados: sin tildes ni espacios). */
+const COMMON = ['contrasena', 'password', 'clave', 'flujo', 'teamo', 'amor', 'hola', 'ecuador', 'quito', 'guayaquil', 'cuenca',
+  'qwerty', 'asdf', 'zxcv', '1qaz', '2wsx', '3edc', 'abc', 'dios', 'familia', 'secreto', 'admin', 'usuario'];
 
 const u32 = (n) => new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]);
 const concat = (...parts) => { const out = new Uint8Array(parts.reduce((a, p) => a + p.length, 0)); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out; };
@@ -397,7 +424,8 @@ export async function createPersonalCode(cfg, password, { iterations = PERSONAL_
  * @throws {PairingError} FORMAT (no es un acceso o está dañado) · KEY (clave vacía o equivocada) · INVALID · UNSUPPORTED
  */
 export async function openPersonalCode(code, password) {
-  const c = webcrypto();
+  let c;
+  try { c = webcrypto(); } catch (_) { throw new PairingError('UNSUPPORTED', MSG2.unsupported); }
   const text = typeof code === 'string' ? code.trim() : '';
   if (!isPersonalCode(text) || text.length > MAX_INPUT) throw new PairingError('FORMAT', MSG2.garbled);
   const body = text.slice(PREFIX2.length);
@@ -411,21 +439,24 @@ export async function openPersonalCode(code, password) {
   const salt = bytes.slice(4, 4 + SALT_BYTES);
   const iv = bytes.slice(4 + SALT_BYTES, 4 + SALT_BYTES + IV_BYTES);
   const sealed = bytes.slice(4 + SALT_BYTES + IV_BYTES);
-  let plain;
-  try {
-    const aes = await derivePersonalKey(c.subtle, pw, salt, it, 'decrypt');
-    plain = new Uint8Array(await c.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: concat(AAD2, head), tagLength: TAG_BYTES * 8 }, aes, sealed));
-  } catch (_) {
-    throw new PairingError('KEY', MSG2.wrong);
-  }
+  const tryKey = async (k) => {
+    try {
+      const aes = await derivePersonalKey(c.subtle, k, salt, it, 'decrypt');
+      return new Uint8Array(await c.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: concat(AAD2, head), tagLength: TAG_BYTES * 8 }, aes, sealed));
+    } catch (_) { return null; }
+  };
+  let plain = await tryKey(pw);
+  const old = normalizePasswordV22(password);
+  if (!plain && old && old !== pw) plain = await tryKey(old);          // accesos creados con v22-v24 y una clave con ’ “ — o similares
+  if (!plain) throw new PairingError('KEY', MSG2.wrong);
   let obj;
   try { obj = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plain)); }
-  catch (_) { throw new PairingError('INVALID', MSG.invalidContent); }
+  catch (_) { throw new PairingError('INVALID', MSG2.invalid); }
   finally { wipe(plain); }
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new PairingError('INVALID', MSG.invalidContent);
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new PairingError('INVALID', MSG2.invalid);
   const { o, r, b, t, c: created } = obj;
-  const bad = badField(o, r, b, t, { owner: MSG.invalidContent, repo: MSG.invalidContent, branch: MSG.invalidContent, token: MSG.invalidContent });
-  if (bad || typeof created !== 'string' || created.length > 40 || Number.isNaN(Date.parse(created))) throw new PairingError('INVALID', MSG.invalidContent);
+  const bad = badField(o, r, b, t, { owner: MSG2.invalid, repo: MSG2.invalid, branch: MSG2.invalid, token: MSG2.invalid });
+  if (bad || typeof created !== 'string' || created.length > 40 || Number.isNaN(Date.parse(created))) throw new PairingError('INVALID', MSG2.invalid);
   return { owner: o, repo: r, branch: b, token: t, createdAt: new Date(created).toISOString() };
 }
 

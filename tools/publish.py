@@ -80,6 +80,39 @@ def stage_app(stage):
     return sorted(set(files))
 
 
+TOKEN_RX_B = re.compile(rb'(?<![A-Za-z0-9_-])(github_pat_|gh[pousr]_)[A-Za-z0-9_]{20,}')
+TEXT_EXT = ('.js', '.css', '.html', '.json', '.md', '.py', '.webmanifest', '.txt', '.svg')
+
+
+def access_problem(text):
+    """None si acceso.json tiene exactamente la forma que acepta la app (js/pairing.js parseAccessFile/openPersonalCode); si no, el motivo."""
+    import base64
+    try:
+        acc = json.loads(text)
+    except Exception:
+        return 'no es JSON válido'
+    if not isinstance(acc, dict) or set(acc) != {'formato', 'creado', 'codigo'} or acc.get('formato') != 'flujo-acceso-1':
+        return 'debe ser exactamente {formato:"flujo-acceso-1", creado, codigo}'
+    if not isinstance(acc['creado'], str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,3})?Z', acc['creado']):
+        return '«creado» debe ser una fecha ISO (AAAA-MM-DDThh:mm:ss.sssZ)'
+    code = acc['codigo']
+    if not isinstance(code, str) or not re.fullmatch(r'FLUJO2\.[A-Za-z0-9_-]{66,1993}', code):
+        return '«codigo» debe ser «FLUJO2.» + base64url'
+    body = code[7:]
+    try:
+        b = base64.urlsafe_b64decode(body + '=' * (-len(body) % 4))
+    except Exception:
+        return '«codigo» no es base64url válido'
+    if base64.urlsafe_b64encode(b).decode().rstrip('=') != body:
+        return '«codigo» no está en forma canónica (¿se cortó al copiarlo?)'
+    if len(b) < 4 + 16 + 12 + 16 + 1:
+        return '«codigo» es demasiado corto (¿se cortó al copiarlo?)'
+    rounds = int.from_bytes(b[:4], 'big')
+    if not 600000 <= rounds <= 10000000:
+        return '«codigo» trae un número de rondas fuera de rango'
+    return None
+
+
 def privacy_scan(stage):
     terms = []
     tf = os.path.join(ROOT, 'tools', 'privacy.private.txt')
@@ -96,23 +129,20 @@ def privacy_scan(stage):
             rel = os.path.relpath(p, stage).replace('\\', '/')
             if rel.startswith('vendor/') or n.lower().endswith(('.png', '.jpg', '.ico', '.svg')) or n == 'LICENSE':
                 continue                      # librerías de terceros e imágenes: no son código propio
-            try:
-                text = open(p, encoding='utf8').read()
-            except Exception:
-                continue
-            if re.search(r'(github_pat_|gh[pousr]_)[A-Za-z0-9_]{20,}', text):
+            raw = open(p, 'rb').read()
+            if rel != 'acceso.json' and TOKEN_RX_B.search(raw):         # en bytes: también si el archivo no es UTF-8
                 hits.append((rel, 'parece un TOKEN de GitHub en claro'))
                 continue
+            try:
+                text = raw.decode('utf-8-sig')
+            except UnicodeDecodeError:
+                if n.lower().endswith(TEXT_EXT):
+                    hits.append((rel, 'no se pudo leer como UTF-8: guárdalo en UTF-8 para poder revisarlo'))
+                continue
             if rel == 'acceso.json':          # clave única: SOLO el acceso cifrado, con forma exacta (el cuerpo es azar: no se busca texto en él)
-                try:
-                    acc = json.loads(text)
-                    ok = bool(isinstance(acc, dict) and set(acc) == {'formato', 'creado', 'codigo'} and acc['formato'] == 'flujo-acceso-1'
-                              and isinstance(acc['creado'], str) and len(acc['creado']) <= 40
-                              and isinstance(acc['codigo'], str) and re.fullmatch(r'FLUJO2\.[A-Za-z0-9_-]{60,1990}', acc['codigo']))
-                except Exception:
-                    ok = False
-                if not ok:
-                    hits.append((rel, 'acceso.json no tiene la forma esperada {formato, creado, codigo:"FLUJO2.…"}'))
+                why = access_problem(text)
+                if why:
+                    hits.append((rel, 'acceso.json: ' + why))
                 continue
             low = text.lower()
             for t in terms:
@@ -141,7 +171,7 @@ def git_commit_push(stage, owner, repo, private, msg):
     run(['git', 'init', '-b', 'main'], cwd=stage)
     ensure_identity(stage)
     run(['git', 'add', '-A'], cwd=stage)
-    run(['git', 'commit', '-m', msg, '-m', 'Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>'], cwd=stage)
+    run(['git', 'commit', '-m', msg, '-m', 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'], cwd=stage)
     vis = '--private' if private else '--public'
     exists = run(['gh', 'repo', 'view', '%s/%s' % (owner, repo)], check=False).returncode == 0
     if exists:
@@ -151,11 +181,15 @@ def git_commit_push(stage, owner, repo, private, msg):
     return info
 
 
-def update_app(stage, owner, repo, msg):
-    """Actualiza un repositorio de app YA publicado: clona, reemplaza los archivos por los preparados y sube solo si hay cambios."""
+def update_app(stage, owner, repo, msg, drop_access=False):
+    """Actualiza un repositorio de app YA publicado: clona, reemplaza los archivos por los preparados y sube solo si hay cambios.
+    Si el sitio tiene acceso.json (clave única) y esta carpeta no, se detiene: publicarlo así apagaría la clave única sin aviso."""
     clone = tempfile.mkdtemp(prefix='flujo-clone-')
     try:
         run(['gh', 'repo', 'clone', '%s/%s' % (owner, repo), clone])
+        if os.path.isfile(os.path.join(clone, 'acceso.json')) and not os.path.isfile(os.path.join(stage, 'acceso.json')) and not drop_access:
+            raise SystemExit('El sitio publicado tiene acceso.json (la clave única) y esta carpeta NO. Cópialo aquí antes de publicar '
+                             '(está en la carpeta del proyecto, FlujoWeb/acceso.json) o usa --quitar-acceso si de verdad quieres apagar la clave única.')
         for name in os.listdir(clone):
             if name == '.git':
                 continue
@@ -168,7 +202,7 @@ def update_app(stage, owner, repo, msg):
         run(['git', 'add', '-A'], cwd=clone)
         if not run(['git', 'status', '--porcelain'], cwd=clone).stdout.strip():
             return None
-        run(['git', 'commit', '-m', msg, '-m', 'Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>'], cwd=clone)
+        run(['git', 'commit', '-m', msg, '-m', 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'], cwd=clone)
         run(['git', 'push', 'origin', 'HEAD'], cwd=clone)
         return run(['git', 'rev-parse', '--short', 'HEAD'], cwd=clone).stdout.strip()
     finally:
@@ -183,6 +217,7 @@ def main():
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--update', action='store_true', help='(solo app) actualiza un repositorio ya publicado en lugar de crearlo')
     ap.add_argument('--message', default='Flujo: actualización de la app')
+    ap.add_argument('--quitar-acceso', action='store_true', help='(solo app --update) permite publicar sin acceso.json aunque el sitio lo tenga')
     a = ap.parse_args()
     need_gh()
     stage = tempfile.mkdtemp(prefix='flujo-publish-')
@@ -206,10 +241,11 @@ def main():
                 for rel, why in hits: print('  %-40s %s' % (rel, why))
                 raise SystemExit(2)
             print('\nEscaneo de privacidad: sin hallazgos.')
+            print('Clave única: ' + ('acceso.json se publica (cifrado).' if 'acceso.json' in files else 'esta carpeta NO tiene acceso.json (si el sitio lo tiene, --update se detendrá).'))
             if a.dry_run:
                 print('(dry-run) no se subió nada.'); return
             if a.update:
-                sha = update_app(stage, a.owner, a.repo, a.message)
+                sha = update_app(stage, a.owner, a.repo, a.message, drop_access=a.quitar_acceso)
                 print('Sin cambios que subir.' if sha is None else 'Actualización subida (commit %s). GitHub Pages la publica en 1-2 min.' % sha)
                 return
             info = git_commit_push(stage, a.owner, a.repo, False, 'Flujo: app web')

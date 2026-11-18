@@ -17,7 +17,7 @@
  */
 'use strict';
 
-const VERSION = 'v24';
+const VERSION = 'v25';
 
 /* "App shell" que se precarga al instalar. Rutas relativas a la carpeta de sw.js. Si algún archivo no existe (todavía)
  * se avisa en la consola pero la instalación sigue: lo importante es que una errata no deje la app sin service worker. */
@@ -87,7 +87,7 @@ function routeFor(request) {
   if (url.origin !== self.location.origin) return null;         // otros orígenes (api.github.com...) NUNCA
   if (!url.pathname.startsWith(SCOPE_PATH)) return null;        // fuera de la carpeta de la app
   const rel = url.pathname.slice(SCOPE_PATH.length);
-  if (rel === 'sw.js' || rel.startsWith('data/')) return null;  // los datos viven en IndexedDB
+  if (rel === 'sw.js' || rel === 'acceso.json' || rel.startsWith('data/')) return null;  // datos en IndexedDB; acceso.json siempre fresco (nunca una copia vieja)
   if (request.mode === 'navigate') return 'navigate';
   if (rel.startsWith('vendor/') || rel.startsWith('icons/')) return 'cache-first';
   return 'network-first';

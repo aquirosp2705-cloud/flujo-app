@@ -131,6 +131,19 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
 - El código de conexión de siempre sigue disponible («¿Tienes un código de conexión? Úsalo aquí»).
 - Pruebas: `_e2e/clave_unica_e2e.py` (32) y `_e2e/ios_reabrir_e2e.py` (10: conectar en la app del ícono, cerrar y abrir).
 
+- v23: si el dispositivo ya tiene la conexión guardada pero no datos (se cerró la app en plena primera descarga), al abrir
+  termina de bajar todo sin volver a pedir la clave (`resumeDownload` en js/app.js).
+- v24: en el celular (≤ 640 px) la fila de la hoja muestra siempre ↶ Deshacer, ↷ Rehacer, Negrita, color de letra, relleno y
+  «Sin color»; el resto de herramientas sigue detrás de «⋯» (`_e2e/movil_herramientas_e2e.py`, 17).
+- v25 (revisión): la clave nueva exige 3 palabras y 16 letras (o 20 seguidas) y rechaza palabras típicas; la puntuación de iOS
+  (’ “ ” —) cuenta como la simple y los accesos ya creados siguen abriendo; sin señal se ofrece «Reintentar»; acceso.json no
+  pasa por la caché del service worker; Ajustes avisa si cambiaste el token después de crear la clave y que **crear otra
+  clave no anula la anterior** (los accesos viejos quedan en el historial público: para cortar el acceso hay que cambiar el
+  token en GitHub). `tools/publish.py --update` se detiene si el sitio tiene acceso.json y la carpeta no (`--quitar-acceso`
+  para apagarla a propósito) y revisa en bytes que ningún archivo lleve un token en claro.
+- Ojo: todas las apps de `<usuario>.github.io` comparten el mismo origen (almacenamiento del navegador y llavero). Para
+  aislar Flujo del todo convendría servirla desde un dominio propio o una cuenta de GitHub dedicada.
+
 ## Excel con formato (v21)
 «Descargar Excel» (y el Excel de un mes archivado) sale con negrita, cursiva, subrayado, tachado, tamaño y color de
 letra, relleno, bordes, alineación, ajuste de texto y sangría, además de los formatos de número. SheetJS Community no

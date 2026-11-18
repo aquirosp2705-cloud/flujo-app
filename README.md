@@ -174,6 +174,16 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Patrimonio (v30)
+Por decisión de la usuaria (18/11/2026): **patrimonio = bancos menos provisiones + todas las inversiones** (el «total invertido»
+de la hoja de pólizas). No entran Guayaquil Ahorros, Produbanco Ahorros ni los ahorros a plazo. Hasta v29 la hoja CONSOL
+contaba las inversiones como «total pólizas − inversiones out». `migratePatrimonio` (js/invest.js) cambia UNA sola vez CONSOL L24
+(`=+'<hoja de pólizas>'!C<fila del total invertido>`) y L27 «total pólizas» (pasa a leer el total de la hoja de pólizas, así su
+celda de control sigue en cero). Lo hace el primer dispositivo conectado que abre la app y acaba de bajar lo último de GitHub sin
+conflictos (así no choca con otro); se guarda y se sube como un cambio más de CONSOL y los demás lo bajan hecho. Los meses ya
+cerrados no cambian (son valores): el gráfico explica el salto del primer mes. Pruebas: `test/invest-test.html` (62) y
+`_e2e/patrimonio_e2e.py` (16: ajuste, subida, no se repite, cierre con las cifras nuevas, otro dispositivo, sin conexión).
+
 ## Bordes en la hoja (v27)
 En la barra de la hoja, junto a los colores, el botón **Bordes ▾** (también a la vista en el celular) pone rayas finas como en
 Excel sobre lo seleccionado: **Raya abajo** (borde inferior del rango), **Raya arriba**, **Raya arriba y abajo**, **Todos los

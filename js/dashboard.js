@@ -35,7 +35,7 @@ import { planClose, applyClose, undoClose, undoConflicts, isUndoRecord, findBloc
 import { a1ToAddr, colLetter } from './engine.js';
 import { el, money, monthText } from './ui.js';
 import { parseInput, serialToDate, todaySerial } from './format.js';
-import { renderInvest } from './invest.js';
+import { renderInvest, readInvestments } from './invest.js';
 
 export const SID = 's01';                      // hoja CONSOL
 const EPS = 0.005;                             // tolerancia de "cero" para dinero (medio centavo)
@@ -836,7 +836,21 @@ export function mount(host, ctx, opts = {}) {
     const today = typeof ctx.today === 'function' ? ctx.today() : undefined;
     const summary = readSummary(eng(), { today, names: accountNames() });
     for (const o of summary.others) { const x = ledgerExtras(o.id, today); if (x) { if (x.balance !== null) o.saldo = x.balance; o.month = x.month; } }
-    return { summary, prov: readProvisions(eng()), series: readNetWorthSeries(eng(), { today }) };
+    return { summary, prov: readProvisions(eng()), series: readNetWorthSeries(eng(), { today }), patriNote: patrimonioNote(summary, today) };
+  }
+
+  /** v30: el mes en curso cuenta todas las inversiones y el mes anterior (ya cerrado) las contaba sin «inversiones out»: se explica el salto. */
+  function patrimonioNote(summary, today) {
+    try {
+      const pt = summary && summary.patrimonio, inv = pt && pt.parts ? pt.parts[2] : null;
+      if (!inv || !isNum(inv.actual) || !isNum(inv.previous) || Math.abs(inv.actual - inv.previous) < EPS) return null;
+      const d = readInvestments(eng(), { today });
+      const p = d && d.patrimonio;
+      if (!p || !p.full || Math.abs(inv.previous - (p.total - p.fuera)) > EPS) return null;    // el mes anterior usaba la fórmula vieja
+      const prevLbl = summary.month && summary.month.previousLabel ? summary.month.previousLabel : 'el mes anterior';
+      return 'Desde este mes el patrimonio cuenta todas tus inversiones (' + money(inv.actual) + '). Hasta ' + prevLbl + ' las contaba sin las «' +
+        (p.labels.out || 'inversiones out') + '» (' + money(inv.previous) + '), por eso este mes sube ' + money(inv.actual - inv.previous) + ' más por ese cambio.';
+    } catch (e) { return null; }
   }
 
   /* ---- navegación ---- */
@@ -1268,6 +1282,9 @@ export function mount(host, ctx, opts = {}) {
     }
     holder.hidden = false; hint.hidden = false;
     chart.update(series);
+    let note = secChart.querySelector('.db-patri-note');
+    if (D.patriNote) { if (!note) { note = el('p', { class: 'db-hint db-patri-note', role: 'note' }); hint.after(note); } note.textContent = D.patriNote; }
+    else if (note) note.remove();
     // tabla alternativa (misma información que el gráfico)
     const open = wrap.querySelector('details') ? wrap.querySelector('details').open : S.tableOpen;
     const table = el('table', { class: 't db-table' }, el('caption', { class: 'db-sr', text: 'Patrimonio por mes' }),

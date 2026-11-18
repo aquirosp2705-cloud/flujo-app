@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '29';
+const VERSION = '30';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -163,6 +163,8 @@ async function preSync(bundle) {
   try {
     const res = await state.sync.pullAll({ timeoutMs: 9000 });          // el propio módulo aborta la descarga a los 9 s (así no escribe tarde sobre un motor ya armado)
     if (res && res.conflicts && res.conflicts.length) state.startConflicts = res.conflicts;
+    // bajó lo último sin conflictos: este dispositivo puede hacer ajustes únicos del libro (p. ej. el patrimonio) sin pisar a otro
+    state.presyncOk = !!(res && res.ok !== false && !(res.conflicts && res.conflicts.length) && !res.timedOut && !res.aborted && (!res.failed || !res.failed.length));
     if (res && res.changed) { const b = await state.store.loadBundle(); if (b) return b; }
   } catch (e) { console.warn('[sync] no se pudo consultar GitHub al iniciar:', e && e.message); }
   return bundle;
@@ -268,6 +270,14 @@ async function startWithBundle(bundle) {
     } catch (e) { console.warn('AutoSaver no disponible', e); }
   }
   if (S && state.store && !state.sync) { try { state.sync = new S.GithubSync(state.store, {}); } catch (e) { console.warn(e); } }
+  // v30: el patrimonio cuenta todas las inversiones (una sola vez; se guarda y se sube como un cambio más de CONSOL). Solo en un
+  // dispositivo conectado que ACABA de bajar lo último de GitHub sin conflictos: así nunca choca con el mismo cambio hecho en otro
+  // dispositivo (el primero que abre lo hace y los demás lo bajan ya hecho).
+  const Inv = state.mods.invest;
+  if (Inv && Inv.migratePatrimonio && syncOn() && state.presyncOk && navigator.onLine) {
+    try { const mig = Inv.migratePatrimonio(state.engine); if (mig) { state.patrimonioMigrado = mig; ctx.changed(['s01']); } }
+    catch (e) { console.warn('[patrimonio] no se pudo actualizar la fórmula de inversiones:', e); }
+  }
   const Ar = state.mods.archive;                // archivo mensual: ctx.archive (lo usa también el cierre de mes)
   if (Ar && Ar.createArchive) {
     try { state.archive = Ar.createArchive({ getEngine: () => state.engine, getStore: () => state.store, getSync: () => state.sync }); }
@@ -291,6 +301,7 @@ async function startWithBundle(bundle) {
   if (!state.store) toast('Sin almacenamiento local: los cambios NO se guardarán al cerrar.', { type: 'warn', ms: 8000 });
   await route();
   updatePill();
+  if (state.patrimonioMigrado) toast('Patrimonio actualizado: ahora cuenta todas tus inversiones' + (typeof state.patrimonioMigrado.after === 'number' ? ' (' + ui.money(state.patrimonioMigrado.after) + ')' : '') + '.', { type: 'ok', ms: 7000 });
   checkPolicyAlert();
   if (state.startConflicts && state.startConflicts.length) toast('Hay ' + state.startConflicts.length + ' hoja(s) en conflicto con GitHub: revisa Ajustes → Sincronización.', { type: 'warn', ms: 9000 });
   if (syncOn()) { autoPush(); autoArchive(); }

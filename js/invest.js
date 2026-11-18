@@ -10,7 +10,12 @@
  *   - CONSOL (s01) L24 «inversiones» (lo que cuenta el patrimonio), L26 «inversiones out» y L27 «total polizas» explican
  *     por qué el patrimonio muestra menos que el total invertido
  *
+ * Patrimonio (v30, pedido de la usuaria): patrimonio = bancos menos provisiones + TODAS las inversiones (el «total invertido»).
+ *   migratePatrimonio cambia una sola vez CONSOL L24 («total pólizas − inversiones out») por el total invertido, y L27 («total
+ *   pólizas» = L24 + L26) por el total de la hoja de pólizas, para que la celda de control de esa hoja siga en cero.
+ *
  * API:  readInvestments(engine, {today}) -> datos · renderInvest(host, engine, opts) -> datos (o null si no hay pólizas)
+ *       migratePatrimonio(engine) -> celdas cambiadas o null
  *       duePolicies(engine, {today, days}) -> pólizas que vencen en 5 días o menos · showDueAlert(ctx, lista, opts) -> aviso al abrir la app
  */
 import { listPolicies } from './quick.js';
@@ -98,9 +103,39 @@ export function readInvestments(eng, opts = {}) {
       inversiones: inv, fuera, total: tot,
       labels: { inv: txt(eng, CONSOL, 23, 10) || 'inversiones', out: txt(eng, CONSOL, 25, 10) || 'inversiones out', tot: txt(eng, CONSOL, 26, 10) || 'total pólizas' },
       diff: round2(tot - (sum + (out.savings ? out.savings.amount : 0))),
+      full: Math.abs(inv - sum) < EPS,                       // el patrimonio cuenta todas las inversiones (v30)
     };
   }
   return out;
+}
+
+/* ================================================================== patrimonio con todas las inversiones (v30) */
+/**
+ * Una sola vez: CONSOL L24 («inversiones» del patrimonio) deja de ser «total pólizas − inversiones out» y pasa a ser el «total
+ * invertido» de la hoja de pólizas; L27 («total pólizas», que era L24 + L26) pasa a leer el total de la hoja de pólizas, así su
+ * celda de control sigue en cero. Solo actúa si L24 todavía tiene la fórmula vieja (se reconoce por su forma, no por el valor).
+ * Los meses ya cerrados no cambian (son valores). @returns {{cells:string[], before:number|null, after:number|null}|null}
+ */
+export function migratePatrimonio(eng) {
+  let sh = null;
+  try { sh = eng && typeof eng.sheet === 'function' ? eng.sheet(SID) : null; } catch (e) { sh = null; }
+  if (!sh || !eng.sheet(CONSOL)) return null;
+  const name = String(sh.name);
+  const esc = name.replace(/\s+/g, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "''");
+  const ref = "'?" + esc + "'?!\\$?";
+  const OLD24 = new RegExp('^=\\+?' + ref + 'C\\$?(\\d+)-' + ref + 'D\\$?(\\d+)$', 'i');
+  const OLD27 = /^=\+?\$?L\$?24\+\$?L\$?26$/i;
+  const raw24 = eng.raw(CONSOL, 23, 11), raw27 = eng.raw(CONSOL, 26, 11);
+  const m = typeof raw24 === 'string' ? OLD24.exec(raw24.replace(/\s+/g, '')) : null;
+  if (!m) return null;
+  const rowTot = findRow(eng, SID, 1, /^total\s+invertido$/i);
+  if (rowTot < 0 || num(eng, SID, rowTot, 2) === null) return null;
+  const q = "'" + name.replace(/'/g, "''") + "'!";
+  const before = num(eng, CONSOL, 23, 11);
+  const cells = ['L24'];
+  eng.set(CONSOL, 23, 11, '=+' + q + 'C' + (rowTot + 1));
+  if (typeof raw27 === 'string' && OLD27.test(raw27.replace(/\s+/g, ''))) { eng.set(CONSOL, 26, 11, '=+' + q + 'C' + m[1]); cells.push('L27'); }
+  return { cells, before, after: num(eng, CONSOL, 23, 11) };
 }
 
 /* ================================================================== aviso al abrir la app: pólizas por vencer */
@@ -182,7 +217,11 @@ export function renderInvest(host, eng, opts = {}) {
   }
 
   const p = d.patrimonio;
-  if (p) {
+  if (p && p.full) {
+    host.append(el('p', { class: 'db-inv-note small muted', text: 'El patrimonio cuenta todas tus inversiones (' + money(p.inversiones) + ')' +
+      (d.savings && d.savings.amount > EPS ? '; los ' + money(d.savings.amount) + ' de ahorros a plazo no entran.' : '.') }));
+    if (Math.abs(p.diff) > EPS) host.append(el('p', { class: 'db-inv-warn small', role: 'status', text: 'Ojo: el total pólizas de CONSOL no coincide con la hoja de pólizas (diferencia ' + money(p.diff, { sign: true }) + ').' }));
+  } else if (p) {
     const rows = [['Total invertido (pólizas por banco)', d.total, '']];
     if (d.savings && d.savings.amount > EPS) rows.push(['Ahorros a plazo', d.savings.amount, '+']);
     rows.push(['Total pólizas (CONSOL «' + p.labels.tot + '»)', p.total, '=']);

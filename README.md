@@ -156,16 +156,18 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   consumos (rubro = columna B; si C es un número es la cuota de una compra diferida) y la hoja de tarjeta + cuenta de ahorros
   (la cuenta se lee como un banco; la zona de la tarjeta no tiene fechas: los consumos de un mes son los anotados después del
   pago del mes anterior y hasta el pago de ese mes, ubicando los pagos por monto en la cuenta; lo anotado después del pago va
-  al mes siguiente). Cada fila cuenta en el mes del **bloque** donde está anotada (`assignMonths`; también fechas escritas como
-  texto: «nov26», «mzo-27»): una fila con la fecha de otro mes u otro año (error de tipeo, cuota con el mes de compra) o sin
-  fecha cuenta en su bloque y sale en «Para revisar»; así ninguna fila cae en dos meses. Un ajuste grande de la tarjeta
+  al mes siguiente). El mes de cada fila (`assignMonths`; también fechas escritas como texto: «nov26», «mzo-27»): **en los
+  bancos manda la fecha que escribiste** (v28: si cambias la fecha de un movimiento, pasa a ese mes) y, si está anotado entre
+  movimientos de otro mes, sale en «Para revisar» en los dos meses; solo un año mal tipeado (2025 por 2026), una fecha a más
+  de 2 meses del bloque o una fila sin fecha cuentan en el mes del bloque donde están. En la tarjeta de consumos cuenta el corte
+  donde está la fila (las cuotas copiadas conservan el mes de compra). Así ninguna fila cae en dos meses. Un ajuste grande de la tarjeta
   (columna E, más de $10) va a «Ajustes de la tarjeta» y no deforma el rubro de la fila.
   **No suman** (para no contar dos veces): pagos de tarjeta desde un banco, dinero entre tus cuentas (palabras como «de bol»,
   «a produb» o el mismo monto que sale de una y entra en otra) y pólizas. Comisiones pequeñas pegadas a un egreso van a
   «Comisiones bancarias». Pantalla `#/rubros/AAAA-MM`; ventana automática al cerrar el mes; Excel con hojas Resumen y Detalle.
 - El aviso de pólizas espera si al abrir hay otra ventana (por ejemplo, el atajo «Anotar») y se revisa también cada 5 minutos
   y al volver el foco, por si la app queda abierta de un día para otro.
-- Pruebas: `test/rubros-test.html` (127 con 8 meses de datos reales: `?data=` apunta a una copia local; incluye casos de
+- Pruebas: `test/rubros-test.html` (135 con 8 meses de datos reales: `?data=` apunta a una copia local; incluye casos de
   `assignMonths`) y `_e2e/rubros_e2e.py` (33: aviso al abrir con el reloj en 03/12, pantalla, cierre de noviembre con la
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).

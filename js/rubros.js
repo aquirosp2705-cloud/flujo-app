@@ -13,8 +13,9 @@
  *     un banco. La zona de la tarjeta (G concepto, H monto) NO tiene fechas: sus pagos (montos negativos) se emparejan por monto con los
  *     pagos de la cuenta, que sí tienen mes; los consumos de un mes son los anotados después del pago del mes anterior y hasta el pago
  *     de ese mes (si todavía no hay pago, hasta la última fila); lo anotado después del pago va al mes siguiente.
- *   - cada fila cuenta en el mes del bloque donde está anotada (assignMonths): las hojas se llenan en orden, así que una fila con la
- *     fecha de otro mes u otro año (error de tipeo, cuota con el mes de compra) o sin fecha cuenta en su bloque y sale en «Para revisar».
+ *   - el mes de cada fila (assignMonths): en los bancos manda la FECHA que escribiste (si cambias la fecha de un movimiento, pasa a
+ *     ese mes; si está anotado entre movimientos de otro mes, se avisa en «Para revisar»); solo un año mal tipeado (2025 por 2026) o
+ *     una fila sin fecha toman el mes del bloque donde están. En la tarjeta de consumos cuenta el corte donde está la fila.
  *   - NO suman, para no contar dos veces: los pagos de tarjeta hechos desde un banco (los consumos ya están en egresos), el dinero que
  *     pasa entre tus cuentas (palabras como «de bol», «a produb», «transf de ahorros», o el mismo monto que sale de una cuenta y entra
  *     en otra) y lo que va a pólizas o vuelve de ellas.
@@ -114,12 +115,18 @@ export function classifyBank(key, dir) {
  *     lejano solo si las 3 siguientes traen ese mismo mes (o si ya no hay más filas);
  *   - si una racha de filas trae un mismo mes anterior al bloque (la fila de la fecha y las 2 o 3 siguientes), el bloque estaba mal
  *     y vuelve a ese mes;
- *   - una fila suelta con otro mes u otro año (error de tipeo, cuota con el mes de compra, movimiento atrasado o adelantado) cuenta
- *     en el bloque y se marca: 'year' (mismo mes, otro año) o 'month' (otro mes); una fila sin fecha toma el mes del bloque ('nodate').
+ *   - una fila sin fecha toma el mes del bloque ('nodate'); una con el mismo mes y otro año (2025 por 2026) es un error de tipeo y
+ *     cuenta en el bloque ('year');
+ *   - una fila con OTRO MES: en los bancos (trustDates) manda la fecha que escribiste —si cambias la fecha de un movimiento, pasa a
+ *     ese mes— y se marca 'own' para avisar, siempre que esté a 2 meses o menos del bloque (más lejos es un error de tipeo: 'month'); en la tarjeta de consumos cuenta en el corte donde está ('month'), porque ahí la columna
+ *     del mes es la etiqueta del corte y las cuotas copiadas conservan el mes de compra.
  * Así cada fila cae en un solo mes y una fila suelta no estira ni traba ningún mes.
- * @param {Array<{mi:number|null}>} rows  de arriba hacia abajo; a cada una se le pone em (mes efectivo o null) y flag
+ * @param {Array<{mi:number|null}>} rows  de arriba hacia abajo; a cada una se le pone em (mes efectivo o null), blk (mes del bloque
+ *   donde está anotada) y flag
+ * @param {{trustDates?:boolean}} opts
  */
-export function assignMonths(rows) {
+const TRUST_SPAN = 2;          // en los bancos manda la fecha escrita si está a 2 meses o menos del bloque; más lejos es un error de tipeo
+export function assignMonths(rows, { trustDates = false } = {}) {
   const dated = [];
   rows.forEach((x, i) => { if (x.mi !== null) dated.push(i); });
   let block = null, k = 0;
@@ -127,25 +134,31 @@ export function assignMonths(rows) {
     const x = rows[i];
     while (k < dated.length && dated[k] <= i) k++;                      // dated[k]: la siguiente fila con fecha
     x.flag = null;
-    if (x.mi === null) { x.em = block; if (block !== null) x.flag = 'nodate'; continue; }
-    if (block === null || x.mi === block) { block = x.mi; x.em = x.mi; continue; }
+    if (x.mi === null) { x.em = x.blk = block; if (block !== null) x.flag = 'nodate'; continue; }
+    if (block === null || x.mi === block) { block = x.mi; x.em = x.blk = x.mi; continue; }
     const next = dated.slice(k, k + 3).map((j) => rows[j].mi);
     if (x.mi > block) {
-      // confirma una fila que trae ese mes o uno posterior, o el mismo mes con el año mal tipeado
-      const ok = !next.length || (x.mi - block <= 2 ? next.some((m) => m >= x.mi || (m - x.mi) % 12 === 0) : next.every((m) => m === x.mi));
-      if (ok) { block = x.mi; x.em = x.mi; continue; }
-    } else if (next.length >= 2 && next.every((m) => m === x.mi)) { block = x.mi; x.em = x.mi; continue; }
-    x.em = block; x.flag = (x.mi - block) % 12 === 0 ? 'year' : 'month';
+      // confirma una fila que trae ese mes o uno posterior, o el mismo mes con el año mal tipeado: la siguiente, o 2 de las 3 siguientes
+      const agree = (m) => m >= x.mi || (m - x.mi) % 12 === 0;
+      const ok = !next.length || (x.mi - block <= 2 ? agree(next[0]) || next.filter(agree).length >= 2 : next.every((m) => m === x.mi));
+      if (ok) { block = x.mi; x.em = x.blk = x.mi; continue; }
+    } else if (next.length >= 2 && next.every((m) => m === x.mi)) { block = x.mi; x.em = x.blk = x.mi; continue; }
+    x.blk = block;
+    if ((x.mi - block) % 12 === 0) { x.em = block; x.flag = 'year'; }
+    else if (trustDates && Math.abs(x.mi - block) <= TRUST_SPAN) { x.em = x.mi; x.flag = 'own'; }
+    else { x.em = block; x.flag = 'month'; }
   }
   return rows;
 }
 const ofMonth = (rows, M) => assignMonths(rows).filter((x) => x.em === M.idx);
+/** Filas anotadas entre los movimientos de M que, por su fecha, cuentan en otro mes (para avisarlo en «Para revisar»). */
+const movedOut = (rows, M) => rows.filter((x) => x.flag === 'own' && x.blk === M.idx && x.em !== M.idx);
 const textOf = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : isNum(v) ? String(v) : '');
 /** Fecha para mostrar: «nov-26» si es el día 1 (las hojas anotan por mes), «13/11/2026» si es otro día; los textos tal cual. */
 const whenOf = (v) => (isNum(v) && Ledger.isPlausibleSerial(v) ? (Ledger.fromSerial(v).d === 1 ? monthText(v) : dateText(v)) : textOf(v));
 
-/** Cuentas de ledger.js. */
-function readBank(eng, src, M, push) {
+/** Cuentas de ledger.js. `moved` recibe las filas del bloque de M que, por su fecha, cuentan en otro mes. */
+function readBank(eng, src, M, push, moved) {
   const L = src.L, last = Ledger.lastMovementRow(eng, L.id);
   const rows = []; let older = 0;
   for (let r = last; r >= L.firstDataRow; r--) {
@@ -156,13 +169,15 @@ function readBank(eng, src, M, push) {
     if (mi !== null && mi < M.idx - 1) { if (++older >= STOP_AFTER) break; } else older = 0;
   }
   rows.reverse();
-  for (const x of ofMonth(rows, M)) {
+  assignMonths(rows, { trustDates: true });
+  for (const x of movedOut(rows, M)) moved.push({ srcLabel: src.label, r: x.r, concept: x.mv.desc || '', em: x.em, when: whenOf(x.mv.date !== null ? x.mv.date : x.mv.dateLabel) });
+  for (const x of rows.filter((y) => y.em === M.idx)) {
     const mv = x.mv;
     const terms = L.terms.map((t) => { const c = mv.amountCells.find((a) => a.col === t.col); return { side: t.side, v: t.effect * (c && isNum(c.value) ? c.value : 0) }; });
     const hasOut = terms.some((t) => t.side === 'debit' && t.v < -EPS);
     let fee = 0, net = 0;
     for (const t of terms) { if (t.side === 'credit' && t.v < -EPS && -t.v <= FEE_MAX && hasOut) fee -= t.v; else net += t.v; }
-    const base = { src: src.id, srcLabel: src.label, sid: L.sid, r: x.r, c: L.cols.desc, when: whenOf(mv.date !== null ? mv.date : mv.dateLabel), flag: x.flag || null, concept: mv.desc || '', bank: true };
+    const base = { src: src.id, srcLabel: src.label, sid: L.sid, r: x.r, c: L.cols.desc, when: whenOf(mv.date !== null ? mv.date : mv.dateLabel), flag: x.flag || null, blk: x.blk, concept: mv.desc || '', bank: true };
     if (fee > EPS) push(Object.assign({}, base, { kind: 'fee', amount: r2(fee), feeOf: true }));
     net = r2(net);
     if (Math.abs(net) > EPS) { const dir = net > 0 ? 'in' : 'out'; push(Object.assign({}, base, { dir, kind: classifyBank(conceptKey(mv.desc), dir), amount: Math.abs(net) })); }
@@ -201,7 +216,7 @@ function readCardTcp(eng, src, M, push) {
 }
 
 /** Hoja con la cuenta de ahorros (A, B, D, E) y la tarjeta sin fechas (G, H). */
-function readProdub(eng, acc, card, M, push, notes) {
+function readProdub(eng, acc, card, M, push, notes, moved) {
   const P = LAYOUTS.produb, sid = acc.sid, sh = eng.sheet(sid);
   const acct = [];
   for (let r = P.acctFirst; r <= Math.min(P.acctMax, sh.rows - 1); r++) {
@@ -210,9 +225,10 @@ function readProdub(eng, acc, card, M, push, notes) {
     const a = eng.value(sid, r, P.A), b = textOf(eng.value(sid, r, P.B));
     acct.push({ r, mi: monthIndexOfCell(a), a, b, key: conceptKey(b), d, e });
   }
-  assignMonths(acct);
+  assignMonths(acct, { trustDates: true });
+  for (const x of movedOut(acct, M)) moved.push({ srcLabel: acc.label, r: x.r, concept: x.b, em: x.em, when: whenOf(x.a) });
   for (const x of acct.filter((y) => y.em === M.idx)) {
-    const base = { src: acc.id, srcLabel: acc.label, sid, r: x.r, c: P.B, when: whenOf(x.a), flag: x.flag || null, concept: x.b, bank: true };
+    const base = { src: acc.id, srcLabel: acc.label, sid, r: x.r, c: P.B, when: whenOf(x.a), flag: x.flag || null, blk: x.blk, concept: x.b, bank: true };
     let net = x.e || 0;
     if (x.d !== null) { if (x.d < -EPS && -x.d <= FEE_MAX) push(Object.assign({}, base, { kind: 'fee', amount: r2(-x.d), feeOf: Math.abs(x.e || 0) > EPS })); else net += x.d; }
     net = r2(net);
@@ -275,14 +291,14 @@ const shortOf = (eng, sid, fb) => { try { const sh = eng.sheet(sid); return sh ?
 export function summarizeMonth(eng, month, opts = {}) {
   const M = monthOf(month);
   if (!M) throw new Error('Mes no válido: ' + month);
-  const entries = [], notes = [], sources = [];
+  const entries = [], notes = [], sources = [], moved = [];
   const push = (e) => entries.push(e);
   const tryRead = (src, fn) => { sources.push(src); try { fn(); } catch (e) { console.warn('[rubros]', src.label, e); notes.push({ id: 'read', level: 'warn', text: 'No se pudo leer ' + src.label + ' (' + ((e && e.message) || e) + ').' }); } };
 
   for (const L of Ledger.listLedgers()) {
     if (!eng.sheet(L.sid)) continue;
     const src = { id: L.id, sid: L.sid, kind: 'bank', label: L.short || L.title, L };
-    tryRead(src, () => readBank(eng, src, M, push));
+    tryRead(src, () => readBank(eng, src, M, push, moved));
   }
   if (eng.sheet(QSHEETS.tcpich)) {
     const src = { id: 'tcpich', sid: QSHEETS.tcpich, kind: 'card', label: shortOf(eng, QSHEETS.tcpich, 'Tarjeta de consumos') };
@@ -294,7 +310,7 @@ export function summarizeMonth(eng, month, opts = {}) {
     const acc = { id: 'produb-cta', sid: QSHEETS.produb, kind: 'bank', label: bankName + ' · Ahorros' };
     const card = { id: 'produb-tc', sid: QSHEETS.produb, kind: 'card', label: cardLabel };
     sources.push(card);
-    tryRead(acc, () => readProdub(eng, acc, card, M, push, notes));
+    tryRead(acc, () => readProdub(eng, acc, card, M, push, notes, moved));
   }
 
   // dinero entre tus cuentas: el mismo monto sale de una y entra en otra, y los conceptos lo sugieren (uno nombra una de tus
@@ -373,9 +389,16 @@ export function summarizeMonth(eng, month, opts = {}) {
     const uniq = (list) => [...new Map(list.map((e) => [e.src + ':' + e.r, e])).values()];
     if (yr.length) notes.push({ id: 'year', level: 'warn', text: 'Fecha con otro año, entre movimientos de ' + M.label + ' (se contaron en ' + M.name + '): ' + uniq(yr).map(desc).join('; ') + '.' });
     if (mo.length) notes.push({ id: 'month', level: 'warn', text: 'Fecha de otro mes, entre movimientos de ' + M.label + ' (se contaron en ' + M.name + ', donde están anotados): ' + uniq(mo).map(desc).join('; ') + '.' });
+    const own = flagged.filter((e) => e.flag === 'own');
+    const blkName = (e) => { const b = e.blk === null || e.blk === undefined ? null : monthOfIdx(e.blk); return b ? ' (anotada entre los de ' + (b.y === M.y ? b.name : b.label) + ')' : ''; };
+    if (own.length) notes.push({ id: 'own', level: 'info', text: 'Se cuentan en ' + M.name + ' por su fecha, aunque están anotadas entre movimientos de otro mes: ' + uniq(own).map((e) => e.srcLabel + ' fila ' + (e.r + 1) + ' «' + (e.concept || 'sin concepto') + '»' + blkName(e)).join('; ') + '.' });
     if (nd.length) notes.push({ id: 'nodate', level: 'warn', text: 'Sin fecha, entre movimientos de ' + M.label + ' (se contaron en ' + M.name + '): ' + uniq(nd).map(desc).join('; ') + '.' });
   }
-  return { month: M, totals, groups, sources: bySrc, entries, notes, count: entries.length };
+  if (moved.length) {
+    notes.push({ id: 'moved', level: 'info', text: 'Anotadas entre los movimientos de ' + M.name + ' pero con fecha de otro mes (se cuentan en ese mes): ' +
+      moved.map((x) => { const m = monthOfIdx(x.em); return x.srcLabel + ' fila ' + (x.r + 1) + ' «' + (x.concept || 'sin concepto') + '» → ' + (m ? m.label : x.when); }).join('; ') + '.' });
+  }
+  return { month: M, totals, groups, sources: bySrc, entries, notes, moved, count: entries.length };
 }
 
 /* ===================================================================== pantalla y ventana */
@@ -493,7 +516,7 @@ export function summaryToRows(S) {
       for (const e of g.items) {
         const signed = sec === 'xfer' || sec === 'inv' ? (e.dir === 'in' ? e.amount : -e.amount) : e.amount;
         det.push([e.when || '', e.srcLabel, kindTxt[e.kind] || e.kind, g.label, e.kind === 'fee' ? 'Comisión' + (e.concept ? ' (' + e.concept + ')' : '') : e.concept, signed, e.r + 1,
-          e.flag === 'year' ? 'fecha con otro año' : e.flag === 'month' ? 'fecha de otro mes' : e.flag === 'nodate' ? 'sin fecha' : '']);
+          e.flag === 'year' ? 'fecha con otro año' : e.flag === 'month' ? 'fecha de otro mes' : e.flag === 'own' ? 'anotada entre movimientos de otro mes' : e.flag === 'nodate' ? 'sin fecha' : '']);
       }
     }
   }

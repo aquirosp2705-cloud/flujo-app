@@ -174,6 +174,10 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## «Disponible hoy» más discreta (v35)
+
+- Tarjeta más pequeña (cifra y márgenes menores, sin el brillo). En la computadora ya no se estira a lo alto de los indicadores: debajo de ella van los accesos rápidos.
+
 ## «Año Acumulado» en Disponible hoy (v34)
 
 - Última línea de la tarjeta «Disponible hoy»: **Año Acumulado** = celda H17 de CONSOL («dif acumulada» = patrimonio actual − diciembre base).

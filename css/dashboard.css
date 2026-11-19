@@ -378,3 +378,34 @@ button.db-kpi:active { transform: none; }
 .db-hero-ytd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--db-hero-line); }
 .db-hero-ytd .k { font-size: 13.5px; font-weight: 650; color: var(--db-hero-muted); }
 .db-hero-ytd .v { font-size: 1.15rem; font-weight: 750; text-align: right; overflow-wrap: anywhere; }
+
+/* ---------- v35: «Disponible hoy» más pequeña y discreta (a pedido de ella: «es muy llamativa») ---------- */
+.db-hero { padding: 14px 16px 12px; }
+.db-hero::after { display: none; }
+.db-hero-label { font-size: 13.5px; }
+.db-hero-month { font-size: 12px; padding: 2px 9px; }
+.db-hero-value, .db-hero-value.long { margin-top: 2px; font-size: 2.1rem; letter-spacing: -.02em; }
+.db-hero-sub { font-size: 12.5px; }
+.db-hero-delta { margin-top: 8px; }
+.db-hero-split { margin-top: 10px; padding-top: 8px; gap: 10px; }
+.db-hero-split .k { font-size: 12px; }
+.db-hero-split .v { font-size: 1rem; }
+.db-meter { height: 6px; margin-top: 8px; }
+.db-hero-note { margin-top: 6px; font-size: 12px; }
+.db-hero-ytd { margin-top: 8px; padding-top: 8px; }
+.db-hero-ytd .k { font-size: 12.5px; }
+.db-hero-ytd .v { font-size: 1rem; }
+@container db (min-width: 740px) {
+  .db-hero { padding: 16px 18px 14px; }
+  .db-hero-value, .db-hero-value.long { font-size: 2.3rem; }
+  /* la tarjeta ya no se estira a lo alto de los indicadores: debajo de ella van los accesos rápidos */
+  .db-top { grid-template-rows: auto 1fr; grid-template-areas: "hero kpis" "actions kpis"; }
+  .db-top.solo { grid-template-rows: none; grid-template-areas: "hero" "actions"; }
+  .db-top > .db-hero, .db-top > .db-actions { align-self: start; }
+  .db-top .db-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .db-top .db-actions > .btn, .db-top .db-actions > .btn:nth-child(n+4) { grid-column: auto; }
+  .db-top .db-actions > .btn.primary { grid-column: 1 / -1; }
+}
+@container db (min-width: 740px) and (max-width: 999px) {
+  .db-top .db-actions .btn:not(.primary) .db-ico { display: none; }     /* columna angosta: el texto completo vale más que el ícono */
+}

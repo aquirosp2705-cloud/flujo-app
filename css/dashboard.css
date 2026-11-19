@@ -409,3 +409,26 @@ button.db-kpi:active { transform: none; }
 @container db (min-width: 740px) and (max-width: 999px) {
   .db-top .db-actions .btn:not(.primary) .db-ico { display: none; }     /* columna angosta: el texto completo vale más que el ícono */
 }
+
+/* ---------- v36: número de «Disponible hoy» más pequeño y tarjeta más baja (la variación va al lado del número) ---------- */
+.db-hero { display: flex; flex-wrap: wrap; align-items: center; column-gap: 12px; padding: 12px 14px 10px; }
+.db-hero > * { flex: 1 1 100%; min-width: 0; order: 3; }
+.db-hero > .db-hero-top { order: 0; }
+.db-hero > .db-hero-value { order: 1; flex: 0 1 auto; }
+.db-hero > .db-hero-delta { order: 2; flex: 1 1 150px; margin-top: 2px; }
+.db-hero-value, .db-hero-value.long { margin-top: 0; font-size: 1.6rem; letter-spacing: -.015em; }
+.db-hero-label { font-size: 13px; }
+.db-hero-sub { margin-top: 0; font-size: 12px; }
+.db-hero-vs { font-size: 12px; }
+.db-hero-split { margin-top: 8px; padding-top: 6px; }
+.db-hero-split .k { font-size: 11.5px; }
+.db-hero-split .v { font-size: .95rem; }
+.db-meter { height: 5px; margin-top: 6px; }
+.db-hero-note { margin-top: 4px; font-size: 11.5px; }
+.db-hero-ytd { margin-top: 6px; padding-top: 6px; }
+.db-hero-ytd .k { font-size: 12px; }
+.db-hero-ytd .v { font-size: .95rem; }
+@container db (min-width: 740px) {
+  .db-hero { padding: 14px 16px 12px; }
+  .db-hero-value, .db-hero-value.long { font-size: 1.75rem; }
+}

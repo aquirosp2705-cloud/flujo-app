@@ -174,6 +174,10 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## «Disponible hoy» más compacta (v36)
+
+- Número más pequeño (1.6rem; 1.75rem en la computadora) y la variación al lado del número: la tarjeta es más baja.
+
 ## «Disponible hoy» más discreta (v35)
 
 - Tarjeta más pequeña (cifra y márgenes menores, sin el brillo). En la computadora ya no se estira a lo alto de los indicadores: debajo de ella van los accesos rápidos.

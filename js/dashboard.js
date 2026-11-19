@@ -35,7 +35,7 @@ import { planClose, applyClose, undoClose, undoConflicts, isUndoRecord, findBloc
 import { a1ToAddr, colLetter } from './engine.js';
 import { el, money, monthText } from './ui.js';
 import { parseInput, serialToDate, todaySerial } from './format.js';
-import { renderInvest, readInvestments } from './invest.js';
+import { renderInvest, readInvestments, whenText } from './invest.js';
 
 export const SID = 's01';                      // hoja CONSOL
 const EPS = 0.005;                             // tolerancia de "cero" para dinero (medio centavo)
@@ -770,6 +770,11 @@ export function closePreviewBody(plan, info = {}) {
 }
 
 /* ================================================================== pantalla */
+let rubrosPromise = null;
+function loadRubros() {
+  if (!rubrosPromise) rubrosPromise = import('./rubros.js').then((m) => m || null).catch(() => null);
+  return rubrosPromise;
+}
 let ledgerPromise = null;
 function loadLedger() {
   if (!ledgerPromise) ledgerPromise = import('./ledger.js').then((m) => m || null).catch(() => null);
@@ -786,13 +791,13 @@ function ledgerEntry(L, id) {
  * Monta el Resumen en `host`.
  * @param {HTMLElement} host
  * @param {object} ctx  contexto de la app (engine, changed, navigate, openSheet, toast, confirm, today, catalog…)
- * @param {{ledger?:object|false, archiveTimeoutMs?:number, closeSummary?:boolean}} opts  opts.ledger inyecta el módulo de movimientos (pruebas); false = no cargarlo; archiveTimeoutMs = espera máxima al guardar el archivo del mes (60 000 por omisión); closeSummary:false = no abrir el resumen de ingresos y egresos al terminar el cierre (pruebas)
+ * @param {{ledger?:object|false, archiveTimeoutMs?:number, closeSummary?:boolean}} opts  opts.ledger inyecta el módulo de movimientos (pruebas); false = no cargarlo; archiveTimeoutMs = espera máxima al guardar el archivo del mes (60 000 por omisión); closeSummary:false = no abrir el resumen de ingresos y egresos al terminar el cierre (pruebas); flow:false = sin los ingresos y egresos de js/rubros.js (pruebas)
  * @returns {{destroy():void, refresh():void}}
  */
 export function mount(host, ctx, opts = {}) {
   const root = el('div', { class: 'db' });
   host.append(root);
-  const S = { mode: 'all', tableOpen: false, active: null, editing: null, adding: false, undo: null, undoTimer: 0, ledger: opts.ledger || null, noLedger: opts.ledger === false, recentId: null, destroyed: false, refreshes: 0, lastClose: null, closing: false };
+  const S = { mode: 'all', tableOpen: false, active: null, editing: null, adding: false, undo: null, undoTimer: 0, ledger: opts.ledger || null, noLedger: opts.ledger === false, recentId: null, destroyed: false, refreshes: 0, lastClose: null, closing: false, flow: null, flowSeq: 0, flowTimer: 0, flowView: 'month', noFlow: opts.flow === false };
   let D = null, chart = null;
 
   const secBanners = el('div', { class: 'db-banners' });
@@ -804,9 +809,13 @@ export function mount(host, ctx, opts = {}) {
   const secProv = el('section', { class: 'card db-prov', 'aria-labelledby': 'db-prov-h' });
   const secChart = el('section', { class: 'card db-chart', 'aria-labelledby': 'db-chart-h' });
   const secRecent = el('section', { class: 'card db-recent', 'aria-labelledby': 'db-recent-h', hidden: true });
-  const top = el('div', { class: 'db-top' }, secHero, secActions, secBanks);                 // móvil: en este orden; escritorio: ver las áreas de la cuadrícula en el CSS
-  const main = el('div', { class: 'db-main' }, secProv, secChart, secRecent);
-  root.append(secDate, secBanners, top, secInvest, main);
+  const secKpis = el('section', { class: 'db-kpis', 'aria-labelledby': 'db-kpis-h' });
+  const secFlow = el('section', { class: 'card db-flow', 'aria-labelledby': 'db-flow-h', hidden: true });
+  // v33, orden de director financiero: lo disponible y los indicadores clave; los accesos; los resultados (ingresos y egresos, patrimonio mes a mes);
+  // dónde está el dinero (provisiones y bancos); las inversiones; los últimos movimientos. Móvil: en este orden; escritorio: áreas de la cuadrícula en el CSS.
+  const top = el('div', { class: 'db-top' }, secHero, secActions, secKpis);
+  const main = el('div', { class: 'db-main' }, secFlow, secBanks, secProv, secChart, secInvest, secRecent);
+  root.append(secDate, secBanners, top, main);
 
   const eng = () => ctx.engine;
   const notify = (type, msg, ms) => { try { ctx.toast(msg, { type, ms }); } catch (e) { /* nada */ } };
@@ -935,6 +944,169 @@ export function mount(host, ctx, opts = {}) {
     if (isNum(s.extra.amount) && Math.abs(s.extra.amount) > EPS && isNum(s.nowTotal)) {
       secHero.append(el('p', { class: 'db-hero-note', text: `Con ${s.extra.label || 'otros fondos'} ${money(s.extra.amount)}: ${money(s.nowTotal)}` }));
     }
+  }
+
+  /* ---- indicadores clave (v33): patrimonio, resultado del mes, acumulado del año e inversiones ---- */
+  /** Va a una sección de la pantalla (y deja el foco en su título, para el teclado y el lector de pantalla). */
+  function jump(sec) {
+    try {
+      const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      sec.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+      const h = sec.querySelector('h2');
+      if (h) { h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true }); }
+    } catch (e) { /* nada */ }
+  }
+  /** Línea del patrimonio de los últimos 13 meses (decorativa: las cifras están en el texto de la tarjeta). */
+  function spark(series) {
+    const pts = ((series && series.flat) || []).slice(-13).map((x) => x.total).filter(isNum);
+    if (pts.length < 2) return null;
+    const W = 112, H = 36, lo = Math.min(...pts), hi = Math.max(...pts), span = (hi - lo) || 1;
+    const xy = pts.map((v, i) => [2 + (i / (pts.length - 1)) * (W - 6), 4 + (1 - (v - lo) / span) * (H - 8)]);
+    const d = xy.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('');
+    const last = xy[xy.length - 1];
+    return sv('svg', { class: 'db-spark', viewBox: `0 0 ${W} ${H}`, width: W, height: H, 'aria-hidden': 'true', focusable: 'false' },
+      sv('path', { class: 'db-spark-a', d: d + `L${last[0].toFixed(1)} ${H}L2 ${H}Z` }), sv('path', { class: 'db-spark-l', d }),
+      sv('circle', { class: 'db-spark-d', cx: last[0].toFixed(1), cy: last[1].toFixed(1), r: 3 }));
+  }
+  /** Una tarjeta de indicador. go = al tocarla (ir al detalle). */
+  function kpiTile({ cls = '', label, value, title = '', kids = [], go = null, goText = '' }) {
+    const body = [el('span', { class: 'db-kpi-l', text: label }),
+      el('span', { class: 'db-kpi-v num' + (value === null ? ' none' : ''), title: title || null, text: value === null ? '—' : value }),
+      ...kids.filter(Boolean)];
+    if (!go) return el('div', { class: 'db-kpi ' + cls }, ...body);
+    return el('button', { type: 'button', class: 'db-kpi ' + cls, onclick: go, title: goText || null }, ...body, el('span', { class: 'db-kpi-go' }, icon('chev', 14)));
+  }
+  const kpiLine = (text, cls = '') => el('span', { class: 'db-kpi-line' + (cls ? ' ' + cls : ''), text });
+  /** «Tasa de ahorro» = resultado / ingresos (lo que quedó de cada dólar que entró). */
+  function rateText(t) {
+    if (!t || !(t.in > EPS)) return '';
+    const r = Math.round((t.net / t.in) * 100);
+    return t.net >= 0 ? 'Tasa de ahorro ' + r + '%' : 'Gastaste ' + Math.abs(r) + '% más de lo que entró';
+  }
+  function renderKpis() {
+    secKpis.replaceChildren();
+    const s = D.summary;
+    secKpis.hidden = !s.ok;
+    if (!s.ok) return;
+    const P = s.patrimonio || {}, prevLabel = s.month.previousLabel || 'el mes anterior';
+    const big = (v) => (isNum(v) ? money(v, { dec: 0 }) : null);
+    const grid = el('div', { class: 'db-kpi-grid' });
+    secKpis.append(el('h2', { id: 'db-kpis-h', class: 'db-kpis-h', text: 'Indicadores clave' }), grid);
+
+    // 1. Patrimonio: el número que resume todo (bancos menos provisiones + inversiones sin la reserva)
+    const pFlat = isNum(P.variation) && Math.abs(P.variation) < EPS;
+    const pChip = isNum(P.variation) ? chip(P.variation, { pct: pctOf(P.variation, P.previous), versus: pFlat ? '' : prevLabel }) : null;
+    const ytdPct = pctOf(P.ytd, P.base);
+    grid.append(kpiTile({ cls: 'pat', label: 'Patrimonio', value: big(P.actual), title: isNum(P.actual) ? money(P.actual) : '', goText: 'Ver el patrimonio mes a mes',
+      kids: [
+        spark(D.series),
+        pChip ? el('span', { class: 'db-kpi-delta' }, pChip, el('span', { class: 'db-kpi-vs', text: pFlat ? 'desde el último cierre' : 'frente a ' + prevLabel })) : null,
+        isNum(P.ytd) ? el('span', { class: 'db-kpi-line' }, 'En el año ', el('b', { class: P.ytd < -EPS ? 'neg' : 'pos', text: money(P.ytd, { sign: true, dec: 0 }) }),
+          ytdPct !== null ? ' (' + (ytdPct > 0 ? '+' : ytdPct < 0 ? '−' : '') + Math.abs(ytdPct * 100).toFixed(1) + '%)' : '', s.month.baseLabel ? ' desde ' + s.month.baseLabel : '') : null,
+      ], go: () => jump(secChart) }));
+
+    // 2 y 3. Resultado del mes y acumulado del año (ingresos − egresos de bancos y tarjetas, por js/rubros.js; llegan después)
+    const F = S.flow;
+    if (F && F.state === 'ok') {
+      const tile = (label, t, go, goText) => kpiTile({ cls: 'res ' + (t.net < -EPS ? 'neg' : 'pos'), label, value: money(t.net, { sign: true, dec: 0 }), title: money(t.net, { sign: true }), go, goText,
+        kids: [kpiLine('Entró ' + money(t.in, { dec: 0 }) + ' · salió ' + money(t.out, { dec: 0 })), rateText(t) ? kpiLine(rateText(t), t.net < -EPS ? 'neg' : '') : null] });
+      grid.append(
+        tile('Resultado de ' + F.M.name, F.Mo.totals, () => ctx.navigate('rubros/' + F.M.key), 'Ver los ingresos y egresos de ' + F.M.label),
+        tile('Acumulado ' + F.M.y, F.Y.totals, () => ctx.navigate('rubros/' + F.M.key + '?vista=anio'), 'Ver el año mes a mes'));
+    } else if (!S.noFlow && !(F && F.state === 'none')) {
+      const msg = F && F.state === 'error' ? 'No se pudo calcular' : 'Calculando…';
+      grid.append(kpiTile({ cls: 'res wait', label: 'Resultado del mes', value: null, kids: [kpiLine(msg)] }),
+        kpiTile({ cls: 'res wait', label: 'Acumulado del año', value: null, kids: [kpiLine(msg)] }));
+    }
+
+    // 4. Inversiones (hoja de pólizas): total, lo que cuenta en el patrimonio, la reserva y el próximo vencimiento
+    let inv = null;
+    try { inv = readInvestments(eng(), { today: s.month.today }); } catch (e) { inv = null; }
+    if (inv && inv.ok) {
+      const part = P.parts && P.parts[2] && isNum(P.parts[2].actual) ? P.parts[2].actual : (inv.patrimonio && isNum(inv.patrimonio.inversiones) ? inv.patrimonio.inversiones : null);
+      grid.append(kpiTile({ cls: 'inv', label: 'Inversiones', value: big(inv.total), title: isNum(inv.total) ? money(inv.total) : '', goText: 'Ver las inversiones por banco',
+        kids: [
+          part !== null ? kpiLine('En el patrimonio ' + money(part, { dec: 0 })) : null,
+          inv.reserve && inv.reserve.amount > EPS ? kpiLine('Reserva aparte ' + money(inv.reserve.amount, { dec: 0 })) : null,
+          inv.next ? kpiLine('Próximo vencimiento ' + whenText(inv.next.daysLeft), inv.next.daysLeft <= 5 ? 'due' : '') : null,
+        ], go: () => jump(secInvest) }));
+    }
+  }
+
+  /* ---- tarjeta «Ingresos y egresos» (v33): el mes frente al acumulado del año y en qué se fue el dinero ---- */
+  function renderFlow() {
+    const s = D.summary, F = S.flow;
+    const hadFocus = secFlow.contains(document.activeElement) && document.activeElement.closest('.db-flow-seg');
+    secFlow.replaceChildren();
+    if (!s.ok || S.noFlow || (F && F.state === 'none')) { secFlow.hidden = true; return; }
+    secFlow.hidden = false;
+    secFlow.append(el('div', { class: 'db-card-head' }, el('h2', { id: 'db-flow-h', text: 'Ingresos y egresos' }),
+      el('button', { type: 'button', class: 'btn ghost db-flow-go', text: 'Ver detalle ›', onclick: () => ctx.navigate('rubros' + (F && F.M ? '/' + F.M.key : '')) })));
+    if (!F || F.state !== 'ok') {
+      secFlow.append(F && F.state === 'error' ? el('p', { class: 'db-flow-wait', text: 'No se pudo calcular aquí. Ábrelo en «Ver detalle».' })
+        : el('div', { class: 'db-flow-wait', role: 'status' }, el('span', { class: 'db-flow-spin', 'aria-hidden': 'true' }), el('span', { text: 'Revisando bancos y tarjetas…' })));
+      return;
+    }
+    const { M, Y, Mo } = F, mt = Mo.totals, yt = Y.totals, nM = Math.max(1, Y.months.length);
+    const amt = (v) => el('td', { class: 'r num', text: money(v, { dec: 0 }) });
+    const net = (v) => el('td', { class: 'r num ' + (v < -EPS ? 'neg' : 'pos'), text: money(v, { sign: true, dec: 0 }) });
+    const rate = (t) => el('td', { class: 'r num', text: t.in > EPS ? Math.round((t.net / t.in) * 100) + '%' : '—' });
+    secFlow.append(el('p', { class: 'db-flow-sub', text: 'Bancos y tarjetas. Sin traspasos entre tus cuentas, pagos de tarjeta ni inversiones.' }),
+      el('div', { class: 'db-flow-tw' }, el('table', { class: 'db-flow-t' }, el('caption', { class: 'db-sr', text: 'Ingresos y egresos de ' + M.label + ' y acumulado de ' + Y.label }),
+        el('thead', {}, el('tr', {}, el('td', {}), el('th', { scope: 'col', class: 'r', text: cap(M.name) }), el('th', { scope: 'col', class: 'r', text: 'Acumulado ' + M.y }))),
+        el('tbody', {},
+          el('tr', {}, el('th', { scope: 'row', text: 'Ingresos' }), amt(mt.in), amt(yt.in)),
+          el('tr', {}, el('th', { scope: 'row', text: 'Egresos' }), amt(mt.out), amt(yt.out)),
+          el('tr', { class: 'tot' }, el('th', { scope: 'row', text: 'Resultado' }), net(mt.net), net(yt.net)),
+          el('tr', { class: 'rate' }, el('th', { scope: 'row', text: 'Tasa de ahorro' }), rate(mt), rate(yt))))),
+      el('p', { class: 'db-flow-avg', text: 'Promedio por mes en ' + M.y + ': entran ' + money(yt.in / nM, { dec: 0 }) + ' y salen ' + money(yt.out / nM, { dec: 0 }) + ' (' + Y.label + ').' }));
+
+    const view = S.flowView === 'year' ? 'year' : 'month';
+    const src = view === 'year' ? Y : Mo;
+    const outs = src.groups.out.filter((g) => g.total > EPS);
+    const total = src.totals.out, top5 = outs.slice(0, 5), max = top5.length ? top5[0].total : 1;
+    const segBtn = (v, text) => el('button', { type: 'button', class: view === v ? 'on' : '', 'aria-pressed': String(view === v), text,
+      onclick: () => { if (S.flowView !== v) { S.flowView = v; renderFlow(); } } });
+    secFlow.append(el('div', { class: 'db-flow-h3' }, el('h3', { text: 'En qué se fue el dinero' }),
+      el('div', { class: 'seg db-flow-seg', role: 'group', 'aria-label': 'Período' }, segBtn('month', cap(M.name)), segBtn('year', 'Año ' + M.y))));
+    if (!top5.length) secFlow.append(el('p', { class: 'db-flow-more', text: view === 'year' ? 'Sin egresos en el año.' : 'Sin egresos en el mes.' }));
+    else {
+      secFlow.append(el('ol', { class: 'db-flow-top', 'aria-label': 'Mayores egresos ' + (view === 'year' ? 'del año' : 'de ' + M.name) }, ...top5.map((g) => {
+        const share = total > EPS ? g.total / total : 0;
+        return el('li', {}, el('span', { class: 'db-flow-n', text: g.label, title: g.label }), el('span', { class: 'db-flow-a num', text: money(g.total, { dec: 0 }) }),
+          el('span', { class: 'db-flow-bar', 'aria-hidden': 'true' }, el('i', { style: { width: Math.max(2, (g.total / max) * 100).toFixed(1) + '%' } })),
+          el('span', { class: 'db-flow-p num', text: Math.round(share * 100) + '%' }));
+      })));
+      const rest = outs.length - top5.length;
+      if (rest > 0) secFlow.append(el('p', { class: 'db-flow-more', text: 'Y ' + rest + ' ' + plural(rest, 'rubro', 'rubros') + ' más. Los porcentajes son sobre el total de egresos (' + money(total, { dec: 0 }) + ').' }));
+    }
+    if (hadFocus) { const b = secFlow.querySelector('.db-flow-seg [aria-pressed="true"]'); if (b) b.focus(); }
+  }
+  /** Calcula los ingresos y egresos del mes de CONSOL y su acumulado del año (aparte, para no frenar la pantalla). delay = espera en ms. */
+  function loadFlow(delay = 0) {
+    if (S.noFlow || S.destroyed) return;
+    clearTimeout(S.flowTimer);
+    const tk = ++S.flowSeq;
+    S.flowTimer = setTimeout(async () => {
+      let next = null;
+      try {
+        const R = await loadRubros();
+        if (S.destroyed || tk !== S.flowSeq) return;
+        const s = D && D.summary;
+        const M = R && s && s.ok ? R.monthOf(isNum(s.month.current) ? s.month.current : s.month.today) : null;
+        if (!R || !M || typeof R.computeYearFor !== 'function') next = { state: 'none' };
+        else {
+          const cache = new Map();
+          const Y = await R.computeYearFor(ctx, M.key, cache);
+          if (S.destroyed || tk !== S.flowSeq) return;
+          const Mo = R.summarizeMonth(eng(), M.key, { cache });
+          next = { state: 'ok', M, Y, Mo };
+        }
+      } catch (e) { console.warn('[dashboard] ingresos y egresos:', e); next = { state: 'error' }; }
+      if (S.destroyed || tk !== S.flowSeq) return;
+      S.flow = next;
+      if (D) { renderKpis(); renderFlow(); }
+    }, delay);
   }
 
   /* ---- accesos rápidos ---- */
@@ -1352,15 +1524,15 @@ export function mount(host, ctx, opts = {}) {
   function renderAll() {
     D = snapshot();
     const ok = D.summary.ok;
-    renderDate(); renderBanners(); renderHero(); renderActions();
+    renderDate(); renderBanners(); renderHero(); renderActions(); renderKpis();
     top.classList.toggle('solo', !ok);
     secBanks.hidden = !ok;
-    renderBanks(); renderInvestments(ok); renderProv();
+    renderBanks(); renderFlow(); renderInvestments(ok); renderProv();
     secChart.hidden = !ok;
     if (ok) renderChart();
     renderRecent();
   }
-  function refresh() { if (S.destroyed) return; S.refreshes++; renderAll(); }
+  function refresh() { if (S.destroyed) return; S.refreshes++; renderAll(); loadFlow(700); }        // los ingresos y egresos se recalculan aparte (y una sola vez si llegan varios cambios seguidos)
   function afterWrite() {
     const before = S.refreshes;
     try { ctx.changed([SID]); } catch (e) { console.warn(e); }
@@ -1373,9 +1545,10 @@ export function mount(host, ctx, opts = {}) {
   }
   if (!S.ledger && !S.noLedger) loadLedger().then((m) => { if (m && !S.destroyed) { S.ledger = m; if (D) { D = snapshot(); renderBanks(); renderRecent(); } } });
   loadLastClose();                                                             // «Deshacer el último cierre» sobrevive al cierre de la app (almacén kv de IndexedDB)
+  loadFlow(120);
 
   return {
     refresh,
-    destroy() { S.destroyed = true; clearUndo(); if (chart) chart.destroy(); root.remove(); },
+    destroy() { S.destroyed = true; clearUndo(); clearTimeout(S.flowTimer); if (chart) chart.destroy(); root.remove(); },
   };
 }

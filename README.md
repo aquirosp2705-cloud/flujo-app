@@ -174,6 +174,18 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Resumen con indicadores clave y acumulado del año (v33)
+
+- **Indicadores clave** arriba del Resumen: patrimonio (con su tendencia, el cambio frente al mes anterior y lo que va del año),
+  resultado del mes y acumulado del año (ingresos − egresos de bancos y tarjetas, con la tasa de ahorro) e inversiones
+  (total, lo que cuenta en el patrimonio, la reserva aparte y el próximo vencimiento). Cada indicador lleva a su detalle.
+- Tarjeta **Ingresos y egresos**: el mes frente al acumulado del año, el promedio por mes y «En qué se fue el dinero»
+  (los 5 rubros con más egresos, del mes o del año).
+- Orden nuevo: disponible e indicadores; accesos; ingresos y egresos con el patrimonio mes a mes; bancos y provisiones;
+  inversiones; últimos movimientos.
+- En «Ingresos y egresos» (#/rubros) hay **Mes | Acumulado del año**: la vista del año tiene la tabla mes a mes y su Excel
+  trae la hoja «Meses»; la vista del mes muestra una franja con el acumulado.
+
 ## Seleccionar un rango y ver su suma (v32)
 - Abajo de la hoja, al seleccionar varias celdas, se lee **Suma · Promedio · Cuenta** (en negrita; en el celular tiene prioridad
   sobre el nombre de la hoja y se lee entera).

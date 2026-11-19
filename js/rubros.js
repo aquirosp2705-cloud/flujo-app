@@ -20,7 +20,8 @@
  *     pasa entre tus cuentas (palabras como «de bol», «a produb», «transf de ahorros», o el mismo monto que sale de una cuenta y entra
  *     en otra) y lo que va a pólizas o vuelve de ellas.
  *
- * API:  summarizeMonth(engine, 'AAAA-MM' | serie, opts) -> resumen · monthOf(clave) · monthIndexOfCell(valor) · conceptKey(texto)
+ * API:  summarizeMonth(engine, 'AAAA-MM' | serie, opts) -> resumen · summarizeYear(engine, 'AAAA-MM') -> acumulado de enero a ese mes
+ *       monthOf(clave) · monthIndexOfCell(valor) · conceptKey(texto) · ytdStrip(acumulado) · monthTable(acumulado)
  *       renderSummary(resumen, opts) -> nodo · mount(host, ctx, 'AAAA-MM') -> pantalla #/rubros · openSummaryDialog(ctx, 'AAAA-MM', opts)
  *       downloadSummary(resumen) -> descarga .xlsx · SHEETS_USED(engine) -> hojas que hay que cargar antes de resumir
  */
@@ -150,15 +151,17 @@ export function assignMonths(rows, { trustDates = false } = {}) {
   }
   return rows;
 }
-const ofMonth = (rows, M) => assignMonths(rows).filter((x) => x.em === M.idx);
 /** Filas anotadas entre los movimientos de M que, por su fecha, cuentan en otro mes (para avisarlo en «Para revisar»). */
 const movedOut = (rows, M) => rows.filter((x) => x.flag === 'own' && x.blk === M.idx && x.em !== M.idx);
 const textOf = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : isNum(v) ? String(v) : '');
 /** Fecha para mostrar: «nov-26» si es el día 1 (las hojas anotan por mes), «13/11/2026» si es otro día; los textos tal cual. */
 const whenOf = (v) => (isNum(v) && Ledger.isPlausibleSerial(v) ? (Ledger.fromSerial(v).d === 1 ? monthText(v) : dateText(v)) : textOf(v));
 
-/** Cuentas de ledger.js. `moved` recibe las filas del bloque de M que, por su fecha, cuentan en otro mes. */
-function readBank(eng, src, M, push, moved) {
+/** Filas de una cuenta con su mes ya asignado. Se leen UNA vez por resumen (caché): el acumulado del año lee desde enero y los
+ *  demás meses reutilizan esas filas. */
+function bankRows(eng, src, M, cache) {
+  const key = 'bank:' + src.id, hit = cache ? cache.get(key) : null;
+  if (hit && hit.from <= M.idx - 1) return hit.rows;
   const L = src.L, last = Ledger.lastMovementRow(eng, L.id);
   const rows = []; let older = 0;
   for (let r = last; r >= L.firstDataRow; r--) {
@@ -170,6 +173,13 @@ function readBank(eng, src, M, push, moved) {
   }
   rows.reverse();
   assignMonths(rows, { trustDates: true });
+  if (cache) cache.set(key, { from: M.idx - 1, rows });
+  return rows;
+}
+
+/** Cuentas de ledger.js. `moved` recibe las filas del bloque de M que, por su fecha, cuentan en otro mes. */
+function readBank(eng, src, M, push, moved, cache) {
+  const L = src.L, rows = bankRows(eng, src, M, cache);
   for (const x of movedOut(rows, M)) moved.push({ srcLabel: src.label, r: x.r, concept: x.mv.desc || '', em: x.em, when: whenOf(x.mv.date !== null ? x.mv.date : x.mv.dateLabel) });
   for (const x of rows.filter((y) => y.em === M.idx)) {
     const mv = x.mv;
@@ -184,8 +194,10 @@ function readBank(eng, src, M, push, moved) {
   }
 }
 
-/** Tarjeta de consumos por corte (A mes, B rubro, C detalle o saldo diferido, D monto, E ajuste). */
-function readCardTcp(eng, src, M, push) {
+/** Filas de la tarjeta de consumos con su corte asignado (una lectura por resumen, como bankRows). */
+function cardRows(eng, src, M, cache) {
+  const hit = cache ? cache.get('tcp') : null;
+  if (hit && hit.from <= M.idx - 1) return hit.rows;
   const T = LAYOUTS.tcpich, sid = src.sid, sh = eng.sheet(sid);
   const rows = []; let older = 0;
   for (let r = sh.rows - 1; r >= T.first; r--) {
@@ -196,8 +208,17 @@ function readCardTcp(eng, src, M, push) {
     if (mi !== null && mi < M.idx - 1) { if (++older >= STOP_AFTER) break; } else older = 0;
   }
   rows.reverse();
+  assignMonths(rows);
+  if (cache) cache.set('tcp', { from: M.idx - 1, rows });
+  return rows;
+}
+
+/** Tarjeta de consumos por corte (A mes, B rubro, C detalle o saldo diferido, D monto, E ajuste). */
+function readCardTcp(eng, src, M, push, cache) {
+  const T = LAYOUTS.tcpich, sid = src.sid;
+  const rows = cardRows(eng, src, M, cache);
   const ADJ = { rubroKey: '_adj', rubroLabel: 'Ajustes de la tarjeta' };
-  for (const x of ofMonth(rows, M)) {
+  for (const x of rows.filter((y) => y.em === M.idx)) {
     const b = textOf(eng.value(sid, x.r, T.B)), cv = x.cv, c = typeof cv === 'string' ? textOf(cv) : '';
     const dif = isNum(cv) && b && !isFiller(b);                         // cuota de una compra diferida: conserva el mes de compra
     const base = { src: src.id, srcLabel: src.label, sid, r: x.r, c: T.B, when: whenOf(x.a), flag: dif && x.flag !== 'nodate' ? null : x.flag, dir: 'out', kind: 'out' };
@@ -215,9 +236,11 @@ function readCardTcp(eng, src, M, push) {
   }
 }
 
-/** Hoja con la cuenta de ahorros (A, B, D, E) y la tarjeta sin fechas (G, H). */
-function readProdub(eng, acc, card, M, push, notes, moved) {
-  const P = LAYOUTS.produb, sid = acc.sid, sh = eng.sheet(sid);
+/** Cuenta de ahorros y zona de la tarjeta (con los pagos ya emparejados), leídas una vez por resumen. */
+function produbRows(eng, sid, cache) {
+  const hit = cache ? cache.get('produb') : null;
+  if (hit) return hit;
+  const P = LAYOUTS.produb, sh = eng.sheet(sid);
   const acct = [];
   for (let r = P.acctFirst; r <= Math.min(P.acctMax, sh.rows - 1); r++) {
     const d = num(eng.value(sid, r, P.D)), e = num(eng.value(sid, r, P.E));
@@ -226,6 +249,33 @@ function readProdub(eng, acc, card, M, push, notes, moved) {
     acct.push({ r, mi: monthIndexOfCell(a), a, b, key: conceptKey(b), d, e });
   }
   assignMonths(acct, { trustDates: true });
+  let last = -1;
+  for (let r = sh.rows - 1; r >= P.cardFirst; r--) { if (textOf(eng.value(sid, r, P.G)) || num(eng.value(sid, r, P.H)) !== null) { last = r; break; } }
+  const rows = [];
+  if (last >= 0) {
+    const pays = acct.filter((x) => isNum(x.e) && x.e < -EPS && x.em !== null && (RX_CARD.test(x.key) || RX_PAY.test(x.key))).map((x) => ({ amt: r2(-x.e), mi: x.em, used: false }));
+    let lastMi = -Infinity;
+    for (let r = P.cardFirst; r <= last; r++) {
+      const h = num(eng.value(sid, r, P.H));
+      if (h === null || Math.abs(h) < EPS) continue;
+      const g = textOf(eng.value(sid, r, P.G));
+      const x = { r, g, h, mi: null, pay: h < -EPS && RX_PAY.test(conceptKey(g)) };
+      if (x.pay) {                                                      // en orden: un pago no puede ser de un mes anterior al pago de arriba
+        const p = pays.find((y) => !y.used && y.mi >= lastMi && Math.abs(y.amt + h) < EPS);
+        if (p) { p.used = true; x.mi = p.mi; lastMi = p.mi; }
+      }
+      rows.push(x);
+    }
+  }
+  const out = { acct, rows, last };
+  if (cache) cache.set('produb', out);
+  return out;
+}
+
+/** Hoja con la cuenta de ahorros (A, B, D, E) y la tarjeta sin fechas (G, H). */
+function readProdub(eng, acc, card, M, push, notes, moved, cache) {
+  const P = LAYOUTS.produb, sid = acc.sid;
+  const { acct, rows, last } = produbRows(eng, sid, cache);
   for (const x of movedOut(acct, M)) moved.push({ srcLabel: acc.label, r: x.r, concept: x.b, em: x.em, when: whenOf(x.a) });
   for (const x of acct.filter((y) => y.em === M.idx)) {
     const base = { src: acc.id, srcLabel: acc.label, sid, r: x.r, c: P.B, when: whenOf(x.a), flag: x.flag || null, blk: x.blk, concept: x.b, bank: true };
@@ -236,23 +286,7 @@ function readProdub(eng, acc, card, M, push, notes, moved) {
   }
 
   // zona de la tarjeta: no tiene fechas; se ubica el mes por sus pagos, emparejados por monto con los pagos de la cuenta (que sí tienen mes)
-  let last = -1;
-  for (let r = sh.rows - 1; r >= P.cardFirst; r--) { if (textOf(eng.value(sid, r, P.G)) || num(eng.value(sid, r, P.H)) !== null) { last = r; break; } }
   if (last < 0) return;
-  const pays = acct.filter((x) => isNum(x.e) && x.e < -EPS && x.em !== null && (RX_CARD.test(x.key) || RX_PAY.test(x.key))).map((x) => ({ amt: r2(-x.e), mi: x.em, used: false }));
-  const rows = [];
-  let lastMi = -Infinity;
-  for (let r = P.cardFirst; r <= last; r++) {
-    const h = num(eng.value(sid, r, P.H));
-    if (h === null || Math.abs(h) < EPS) continue;
-    const g = textOf(eng.value(sid, r, P.G));
-    const x = { r, g, h, mi: null, pay: h < -EPS && RX_PAY.test(conceptKey(g)) };
-    if (x.pay) {                                                        // en orden: un pago no puede ser de un mes anterior al pago de arriba
-      const p = pays.find((y) => !y.used && y.mi >= lastMi && Math.abs(y.amt + h) < EPS);
-      if (p) { p.used = true; x.mi = p.mi; lastMi = p.mi; }
-    }
-    rows.push(x);
-  }
   const matched = rows.filter((x) => x.mi !== null);
   const bnd = (mi) => { let b = -1, bm = null; for (const x of matched) if (x.mi <= mi && x.r > b) { b = x.r; bm = x.mi; } return { r: b, mi: bm }; };
   const prev = bnd(M.idx - 1);
@@ -291,18 +325,19 @@ const shortOf = (eng, sid, fb) => { try { const sh = eng.sheet(sid); return sh ?
 export function summarizeMonth(eng, month, opts = {}) {
   const M = monthOf(month);
   if (!M) throw new Error('Mes no válido: ' + month);
+  const cache = opts.cache || null;
   const entries = [], notes = [], sources = [], moved = [];
-  const push = (e) => entries.push(e);
+  const push = (e) => { e.month = M.key; entries.push(e); };
   const tryRead = (src, fn) => { sources.push(src); try { fn(); } catch (e) { console.warn('[rubros]', src.label, e); notes.push({ id: 'read', level: 'warn', text: 'No se pudo leer ' + src.label + ' (' + ((e && e.message) || e) + ').' }); } };
 
   for (const L of Ledger.listLedgers()) {
     if (!eng.sheet(L.sid)) continue;
     const src = { id: L.id, sid: L.sid, kind: 'bank', label: L.short || L.title, L };
-    tryRead(src, () => readBank(eng, src, M, push, moved));
+    tryRead(src, () => readBank(eng, src, M, push, moved, cache));
   }
   if (eng.sheet(QSHEETS.tcpich)) {
     const src = { id: 'tcpich', sid: QSHEETS.tcpich, kind: 'card', label: shortOf(eng, QSHEETS.tcpich, 'Tarjeta de consumos') };
-    tryRead(src, () => readCardTcp(eng, src, M, push));
+    tryRead(src, () => readCardTcp(eng, src, M, push, cache));
   }
   if (eng.sheet(QSHEETS.produb)) {
     const cardLabel = shortOf(eng, QSHEETS.produb, 'Tarjeta');
@@ -310,7 +345,7 @@ export function summarizeMonth(eng, month, opts = {}) {
     const acc = { id: 'produb-cta', sid: QSHEETS.produb, kind: 'bank', label: bankName + ' · Ahorros' };
     const card = { id: 'produb-tc', sid: QSHEETS.produb, kind: 'card', label: cardLabel };
     sources.push(card);
-    tryRead(acc, () => readProdub(eng, acc, card, M, push, notes, moved));
+    tryRead(acc, () => readProdub(eng, acc, card, M, push, notes, moved, cache));
   }
 
   // dinero entre tus cuentas: el mismo monto sale de una y entra en otra, y los conceptos lo sugieren (uno nombra una de tus
@@ -334,6 +369,32 @@ export function summarizeMonth(eng, month, opts = {}) {
     }
   }
 
+  const groups = buildGroups(entries);
+  const totals = buildTotals(groups, entries);
+  const bySrc = bySource(sources, entries);
+  const empty = bySrc.filter((s) => !s.count).map((s) => s.label);
+  if (empty.length && empty.length < bySrc.length) notes.push({ id: 'empty', level: 'info', text: 'Sin movimientos en ' + M.name + ': ' + empty.join(', ') + '.' });
+  const flagged = entries.filter((e) => e.flag);
+  if (flagged.length) {
+    const desc = (e) => e.srcLabel + ' fila ' + (e.r + 1) + (e.when ? ' («' + e.when + '»)' : ' (sin fecha)');
+    const yr = flagged.filter((e) => e.flag === 'year'), nd = flagged.filter((e) => e.flag === 'nodate'), mo = flagged.filter((e) => e.flag === 'month');
+    const uniq = (list) => [...new Map(list.map((e) => [e.src + ':' + e.r, e])).values()];
+    if (yr.length) notes.push({ id: 'year', level: 'warn', text: 'Fecha con otro año, entre movimientos de ' + M.label + ' (se contaron en ' + M.name + '): ' + uniq(yr).map(desc).join('; ') + '.' });
+    if (mo.length) notes.push({ id: 'month', level: 'warn', text: 'Fecha de otro mes, entre movimientos de ' + M.label + ' (se contaron en ' + M.name + ', donde están anotados): ' + uniq(mo).map(desc).join('; ') + '.' });
+    const own = flagged.filter((e) => e.flag === 'own');
+    const blkName = (e) => { const b = e.blk === null || e.blk === undefined ? null : monthOfIdx(e.blk); return b ? ' (anotada entre los de ' + (b.y === M.y ? b.name : b.label) + ')' : ''; };
+    if (own.length) notes.push({ id: 'own', level: 'info', text: 'Se cuentan en ' + M.name + ' por su fecha, aunque están anotadas entre movimientos de otro mes: ' + uniq(own).map((e) => e.srcLabel + ' fila ' + (e.r + 1) + ' «' + (e.concept || 'sin concepto') + '»' + blkName(e)).join('; ') + '.' });
+    if (nd.length) notes.push({ id: 'nodate', level: 'warn', text: 'Sin fecha, entre movimientos de ' + M.label + ' (se contaron en ' + M.name + '): ' + uniq(nd).map(desc).join('; ') + '.' });
+  }
+  if (moved.length) {
+    notes.push({ id: 'moved', level: 'info', text: 'Anotadas entre los movimientos de ' + M.name + ' pero con fecha de otro mes (se cuentan en ese mes): ' +
+      moved.map((x) => { const m = monthOfIdx(x.em); return x.srcLabel + ' fila ' + (x.r + 1) + ' «' + (x.concept || 'sin concepto') + '» → ' + (m ? m.label : x.when); }).join('; ') + '.' });
+  }
+  return { month: M, totals, groups, sources: bySrc, srcDefs: sources.map((x) => ({ id: x.id, label: x.label, kind: x.kind })), entries, notes, moved, count: entries.length };
+}
+
+/** Rubros: agrupa los movimientos por sección (in/out/card/xfer/inv) y clave de rubro o concepto. */
+function buildGroups(entries) {
   const groups = { in: [], out: [], card: [], xfer: [], inv: [] };
   const byKey = { in: new Map(), out: new Map(), card: new Map(), xfer: new Map(), inv: new Map() };
   for (const e of entries) {
@@ -360,45 +421,54 @@ export function summarizeMonth(eng, month, opts = {}) {
     }
     groups[sec].sort((a, b) => Math.abs(b.total) - Math.abs(a.total) || a.label.localeCompare(b.label, 'es'));
   }
+  return groups;
+}
 
-  const sum = (list, f) => r2(list.reduce((a, e) => a + f(e), 0));
-  const tIn = sum(groups.in, (g) => g.total), tOut = sum(groups.out, (g) => g.total);
+const sumOf = (list, f) => r2(list.reduce((a, e) => a + f(e), 0));
+/** Totales de un resumen (ingresos, egresos, resultado y lo que no suma). */
+function buildTotals(groups, entries) {
+  const tIn = sumOf(groups.in, (g) => g.total), tOut = sumOf(groups.out, (g) => g.total);
   const xf = entries.filter((e) => e.kind === 'xfer'), iv = entries.filter((e) => e.kind === 'inv');
-  const totals = {
+  return {
     in: tIn, out: tOut, net: r2(tIn - tOut),
-    card: sum(groups.card, (g) => g.total),
-    xferOut: sum(xf.filter((e) => e.dir === 'out'), (e) => e.amount), xferIn: sum(xf.filter((e) => e.dir === 'in'), (e) => e.amount),
-    invOut: sum(iv.filter((e) => e.dir === 'out'), (e) => e.amount), invIn: sum(iv.filter((e) => e.dir === 'in'), (e) => e.amount),
+    card: sumOf(groups.card, (g) => g.total),
+    xferOut: sumOf(xf.filter((e) => e.dir === 'out'), (e) => e.amount), xferIn: sumOf(xf.filter((e) => e.dir === 'in'), (e) => e.amount),
+    invOut: sumOf(iv.filter((e) => e.dir === 'out'), (e) => e.amount), invIn: sumOf(iv.filter((e) => e.dir === 'in'), (e) => e.amount),
   };
-
-  const bySrc = sources.map((s) => {
+}
+/** Por cuenta y tarjeta: ingresos, egresos y lo que no suma de cada fuente. */
+function bySource(sources, entries) {
+  return sources.map((s) => {
     const mine = entries.filter((e) => e.src === s.id);
     return {
       id: s.id, label: s.label, kind: s.kind, count: mine.length,
-      in: sum(mine.filter((e) => e.kind === 'in'), (e) => e.amount),
-      out: sum(mine.filter((e) => e.kind === 'out' || e.kind === 'fee'), (e) => e.amount),
-      skip: sum(mine.filter((e) => e.kind === 'card' || e.kind === 'xfer' || e.kind === 'inv'), (e) => e.amount),
+      in: sumOf(mine.filter((e) => e.kind === 'in'), (e) => e.amount),
+      out: sumOf(mine.filter((e) => e.kind === 'out' || e.kind === 'fee'), (e) => e.amount),
+      skip: sumOf(mine.filter((e) => e.kind === 'card' || e.kind === 'xfer' || e.kind === 'inv'), (e) => e.amount),
     };
   });
-  const empty = bySrc.filter((s) => !s.count).map((s) => s.label);
-  if (empty.length && empty.length < bySrc.length) notes.push({ id: 'empty', level: 'info', text: 'Sin movimientos en ' + M.name + ': ' + empty.join(', ') + '.' });
-  const flagged = entries.filter((e) => e.flag);
-  if (flagged.length) {
-    const desc = (e) => e.srcLabel + ' fila ' + (e.r + 1) + (e.when ? ' («' + e.when + '»)' : ' (sin fecha)');
-    const yr = flagged.filter((e) => e.flag === 'year'), nd = flagged.filter((e) => e.flag === 'nodate'), mo = flagged.filter((e) => e.flag === 'month');
-    const uniq = (list) => [...new Map(list.map((e) => [e.src + ':' + e.r, e])).values()];
-    if (yr.length) notes.push({ id: 'year', level: 'warn', text: 'Fecha con otro año, entre movimientos de ' + M.label + ' (se contaron en ' + M.name + '): ' + uniq(yr).map(desc).join('; ') + '.' });
-    if (mo.length) notes.push({ id: 'month', level: 'warn', text: 'Fecha de otro mes, entre movimientos de ' + M.label + ' (se contaron en ' + M.name + ', donde están anotados): ' + uniq(mo).map(desc).join('; ') + '.' });
-    const own = flagged.filter((e) => e.flag === 'own');
-    const blkName = (e) => { const b = e.blk === null || e.blk === undefined ? null : monthOfIdx(e.blk); return b ? ' (anotada entre los de ' + (b.y === M.y ? b.name : b.label) + ')' : ''; };
-    if (own.length) notes.push({ id: 'own', level: 'info', text: 'Se cuentan en ' + M.name + ' por su fecha, aunque están anotadas entre movimientos de otro mes: ' + uniq(own).map((e) => e.srcLabel + ' fila ' + (e.r + 1) + ' «' + (e.concept || 'sin concepto') + '»' + blkName(e)).join('; ') + '.' });
-    if (nd.length) notes.push({ id: 'nodate', level: 'warn', text: 'Sin fecha, entre movimientos de ' + M.label + ' (se contaron en ' + M.name + '): ' + uniq(nd).map(desc).join('; ') + '.' });
-  }
-  if (moved.length) {
-    notes.push({ id: 'moved', level: 'info', text: 'Anotadas entre los movimientos de ' + M.name + ' pero con fecha de otro mes (se cuentan en ese mes): ' +
-      moved.map((x) => { const m = monthOfIdx(x.em); return x.srcLabel + ' fila ' + (x.r + 1) + ' «' + (x.concept || 'sin concepto') + '» → ' + (m ? m.label : x.when); }).join('; ') + '.' });
-  }
-  return { month: M, totals, groups, sources: bySrc, entries, notes, moved, count: entries.length };
+}
+
+/**
+ * Acumulado del año: de enero al mes indicado (incluido). Cada mes se resume como en summarizeMonth (las transferencias se emparejan
+ * dentro de su mes) y después se juntan los rubros. Cada hoja se lee una sola vez (caché compartida).
+ * @returns {{year:number, month, months:{month, totals, count}[], totals, groups, sources, srcDefs, entries, notes:[], count:number}}
+ */
+export function summarizeYear(eng, month, opts = {}) {
+  const M = monthOf(month);
+  if (!M) throw new Error('Mes no válido: ' + month);
+  const cache = opts.cache || new Map();
+  const list = [];
+  for (let m = 1; m <= M.m; m++) list.push(summarizeMonth(eng, { y: M.y, m }, { cache }));      // enero primero: es la lectura más larga
+  const entries = list.flatMap((x) => x.entries);
+  const groups = buildGroups(entries);
+  const srcDefs = list.length ? list[list.length - 1].srcDefs : [];
+  const first = monthOf({ y: M.y, m: 1 });
+  return {
+    year: M.y, month: M, first, months: list.map((x) => ({ month: x.month, totals: x.totals, count: x.count })),
+    totals: buildTotals(groups, entries), groups, sources: bySource(srcDefs, entries), srcDefs, entries, notes: [], count: entries.length,
+    label: (M.m === 1 ? M.name : first.name + ' a ' + M.name) + ' ' + M.y,
+  };
 }
 
 /* ===================================================================== pantalla y ventana */
@@ -456,6 +526,7 @@ export function renderSummary(S, opts = {}) {
     kpi('in', 'Ingresos', money(t.in)),
     kpi('out', 'Egresos', money(t.out)),
     kpi(t.net < 0 ? 'net neg' : 'net', t.net < 0 ? 'Faltó' : 'Sobró', money(Math.abs(t.net)), 'ingresos − egresos')));
+  if (opts.afterKpis) root.append(opts.afterKpis);
 
   for (const sec of ['in', 'out']) {
     const list = S.groups[sec];
@@ -508,7 +579,7 @@ export function sourceTotals(S) {
 /** Filas para Excel: hoja «Resumen» y hoja «Detalle». srcRows = [primera, última] fila (base 0) de la tabla por cuenta, con su total. */
 export function summaryToRows(S) {
   const M = S.month, t = S.totals;
-  const res = [['Ingresos y egresos de ' + M.label], ['Bancos y tarjetas de Flujo · generado el ' + new Date().toLocaleDateString('es-EC')], [],
+  const res = [[S.months ? 'Ingresos y egresos · acumulado ' + S.label : 'Ingresos y egresos de ' + M.label], ['Bancos y tarjetas de Flujo · generado el ' + new Date().toLocaleDateString('es-EC')], [],
     ['Tipo', 'Rubro', 'Monto', 'Movimientos', 'Cuentas o tarjetas']];
   for (const g of S.groups.in) res.push(['Ingreso', g.label, g.total, g.count, g.sources.join(', ')]);
   res.push(['', 'TOTAL INGRESOS', t.in], []);
@@ -539,14 +610,21 @@ export function summaryToRows(S) {
       }
     }
   }
-  return { resumen: res, detalle: det, srcRows };
+  let meses = null;
+  if (S.months) {                                                       // acumulado del año: un renglón por mes y la suma
+    meses = [['Mes', 'Ingresos', 'Egresos', 'Resultado', 'Acumulado']];
+    let acc = 0;
+    for (const m of S.months) { acc = r2(acc + m.totals.net); meses.push([cap(m.month.label), m.totals.in, m.totals.out, m.totals.net, acc]); }
+    meses.push(['TOTAL', S.totals.in, S.totals.out, S.totals.net, acc]);
+  }
+  return { resumen: res, detalle: det, srcRows, meses };
 }
 
 /** Descarga el resumen como .xlsx (SheetJS se carga solo la primera vez). */
 export async function downloadSummary(S) {
   const X = await import('./export.js');
   const XLSX = await X.loadXlsxLib();
-  const { resumen, detalle, srcRows } = summaryToRows(S);
+  const { resumen, detalle, srcRows, meses } = summaryToRows(S);
   const money2 = '#,##0.00';
   const ws1 = XLSX.utils.aoa_to_sheet(resumen), ws2 = XLSX.utils.aoa_to_sheet(detalle);
   const fmt = (ws, col, from) => { for (let r = from; ; r++) { const a = XLSX.utils.encode_cell({ r, c: col }); const range = XLSX.utils.decode_range(ws['!ref']); if (r > range.e.r) break; if (ws[a] && typeof ws[a].v === 'number') ws[a].z = money2; } };
@@ -556,50 +634,116 @@ export async function downloadSummary(S) {
   ws2['!cols'] = [{ wch: 12 }, { wch: 26 }, { wch: 24 }, { wch: 28 }, { wch: 34 }, { wch: 13 }, { wch: 10 }, { wch: 20 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws1, 'Resumen');
+  if (meses) {
+    const ws3 = XLSX.utils.aoa_to_sheet(meses);
+    for (let r = 1; r < meses.length; r++) for (let c = 1; c <= 4; c++) { const a = XLSX.utils.encode_cell({ r, c }); if (ws3[a] && typeof ws3[a].v === 'number') ws3[a].z = money2; }
+    ws3['!cols'] = [{ wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Meses');
+  }
   XLSX.utils.book_append_sheet(wb, ws2, 'Detalle');
   const bytes = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-  X.downloadBlob(new Blob([bytes], { type: X.XLSX_MIME }), 'Flujo_ingresos_egresos_' + S.month.key + '.xlsx');
+  X.downloadBlob(new Blob([bytes], { type: X.XLSX_MIME }), 'Flujo_ingresos_egresos_' + (S.months ? S.year + '_acumulado_a_' + S.month.key : S.month.key) + '.xlsx');
 }
 
 /** Carga las hojas que hacen falta (cediendo el hilo) y resume. */
-async function compute(ctx, key) {
-  const eng = ctx.engine;
+async function loadSheets(eng) {
   for (const sid of SHEETS_USED(eng)) { const sh = eng.sheet(sid); if (sh && !sh.loaded && eng.loadSheetAsync) await eng.loadSheetAsync(sid); }
-  return summarizeMonth(eng, key);
 }
+async function compute(ctx, key) { await loadSheets(ctx.engine); return summarizeMonth(ctx.engine, key); }
+async function computeYear(ctx, key, cache) { await loadSheets(ctx.engine); await new Promise((r) => setTimeout(r, 0)); return summarizeYear(ctx.engine, key, { cache }); }
+export { computeYear as computeYearFor, compute as computeMonthFor };
 const todayKey = (ctx) => monthOf(typeof ctx.today === 'function' ? ctx.today() : todaySerial()).key;
 
-/** Pantalla #/rubros/AAAA-MM (sin mes: el mes de hoy). */
+/** El acumulado como si fuera un resumen de mes (para reutilizar renderSummary y el Excel). */
+function yearView(Y) {
+  return Object.assign({}, Y, { month: { key: Y.month.key, y: Y.year, m: Y.month.m, label: 'acumulado ' + Y.label, name: String(Y.year) } });
+}
+
+/** Franja «Acumulado del año» debajo de los totales del mes. onOpen = ver la vista del año. */
+export function ytdStrip(Y, onOpen) {
+  const t = Y.totals;
+  const item = (cls, k, v) => el('span', { class: 'rb-ytd-i ' + cls }, el('span', { class: 'k', text: k }), el('span', { class: 'v', text: v }));
+  return el('div', { class: 'rb-ytd', role: 'group', 'aria-label': 'Acumulado ' + Y.label },
+    el('div', { class: 'rb-ytd-h' }, el('span', { class: 'rb-ytd-t', text: 'Acumulado ' + Y.year }), el('span', { class: 'rb-ytd-s', text: Y.label })),
+    el('div', { class: 'rb-ytd-row' }, item('in', 'Ingresos', money(t.in)), item('out', 'Egresos', money(t.out)), item(t.net < 0 ? 'net neg' : 'net', t.net < 0 ? 'Faltó' : 'Sobró', money(Math.abs(t.net)))),
+    typeof onOpen === 'function' ? el('button', { type: 'button', class: 'btn ghost rb-ytd-go', text: 'Ver el año mes a mes ›', onclick: onOpen }) : null);
+}
+
+/** Tabla mes a mes del acumulado: ingresos, egresos, resultado (con barra) y acumulado. onMonth(key) abre ese mes. */
+export function monthTable(Y, onMonth) {
+  const max = Math.max(...Y.months.map((m) => Math.abs(m.totals.net)), 0.01);
+  let acc = 0;
+  const rows = Y.months.map((m) => {
+    acc = r2(acc + m.totals.net);
+    const pct = Math.max(2, Math.min(100, (Math.abs(m.totals.net) / max) * 100));
+    const name = cap(m.month.name);
+    return el('tr', {},
+      el('th', { scope: 'row' }, typeof onMonth === 'function' ? el('button', { type: 'button', class: 'rb-mt-m', title: 'Ver ' + m.month.label, onclick: () => onMonth(m.month.key), text: name }) : name),
+      el('td', { class: 'r', text: money(m.totals.in) }), el('td', { class: 'r', text: money(m.totals.out) }),
+      el('td', { class: 'r rb-mt-net' + (m.totals.net < 0 ? ' neg' : '') }, el('span', { class: 'rb-mt-bar' + (m.totals.net < 0 ? ' neg' : ''), 'aria-hidden': 'true' }, el('i', { style: { width: pct.toFixed(1) + '%' } })), el('span', { text: money(m.totals.net) })),
+      el('td', { class: 'r' + (acc < 0 ? ' neg' : ''), text: money(acc) }));
+  });
+  const t = Y.totals;
+  const table = el('table', { class: 't rb-mt' }, el('caption', { class: 'rb-sr', text: 'Mes a mes' }),
+    el('thead', {}, el('tr', {}, ...['Mes', 'Ingresos', 'Egresos', 'Resultado', 'Acumulado'].map((x, i) => el('th', { scope: 'col', class: i ? 'r' : '', text: x })))),
+    el('tbody', {}, ...rows),
+    el('tfoot', {}, el('tr', {}, el('th', { scope: 'row', text: 'Total' }), el('td', { class: 'r', text: money(t.in) }), el('td', { class: 'r', text: money(t.out) }), el('td', { class: 'r' + (t.net < 0 ? ' neg' : ''), text: money(t.net) }), el('td', { class: 'r' + (t.net < 0 ? ' neg' : ''), text: money(t.net) }))));
+  return el('section', { class: 'rb-sec rb-months' }, el('div', { class: 'rb-sec-h' }, el('h3', { text: 'Mes a mes' }), el('span', { class: 'small muted', text: 'Toca un mes para ver su detalle' })), el('div', { class: 'scrollx' }, table));
+}
+
+/** Pantalla #/rubros/AAAA-MM (sin mes: el mes de hoy); con ?vista=anio, el acumulado del año hasta ese mes. */
 export function mount(host, ctx, arg, q) {
   const M = monthOf(arg) || monthOf(todayKey(ctx));
-  const S = { dead: false, data: null };
+  const year = !!(q && typeof q.get === 'function' && q.get('vista') === 'anio');
+  const S = { dead: false, data: null, year: null, cache: new Map() };
   const prev = shiftMonth(M.key, -1), next = shiftMonth(M.key, 1), nowKey = todayKey(ctx);
-  const go = (k, f) => ctx.navigate('rubros/' + k + (f ? '?f=' + f : ''));
-  const title = el('h2', { class: 'rb-title', text: cap(M.label) });
+  const go = (k, f, toYear = year) => ctx.navigate('rubros/' + k + ((toYear || f) ? '?' + [toYear ? 'vista=anio' : '', f ? 'f=' + f : ''].filter(Boolean).join('&') : ''));
+  const title = el('h2', { class: 'rb-title', text: year ? 'Acumulado ' + M.y : cap(M.label) });
   const dl = el('button', { type: 'button', class: 'btn', text: 'Descargar Excel', disabled: true, onclick: async () => {
-    if (!S.data) return;
+    const d = year ? S.year : S.data;
+    if (!d) return;
     dl.disabled = true;
-    try { await downloadSummary(S.data); } catch (e) { console.error(e); if (ctx.toast) ctx.toast('No se pudo descargar: ' + ((e && e.message) || e), { type: 'error', ms: 7000 }); }
+    try { await downloadSummary(year ? yearView(d) : d); } catch (e) { console.error(e); if (ctx.toast) ctx.toast('No se pudo descargar: ' + ((e && e.message) || e), { type: 'error', ms: 7000 }); }
     finally { dl.disabled = false; }
   } });
+  const seg = el('div', { class: 'seg rb-seg', role: 'group', 'aria-label': 'Vista' },
+    el('button', { type: 'button', class: year ? '' : 'on', 'aria-pressed': String(!year), text: 'Mes', onclick: () => { if (year) go(M.key, null, false); } }),
+    el('button', { type: 'button', class: year ? 'on' : '', 'aria-pressed': String(year), text: 'Acumulado del año', onclick: () => { if (!year) go(M.key, null, true); } }));
+  const sub = year ? 'Lo que entró y salió de enero a ' + M.name + ' de ' + M.y + ' en tus bancos y tarjetas, por rubro y mes a mes.'
+    : 'Lo que entró y salió en el mes en tus bancos y tarjetas, agrupado por rubro.' + (M.key === nowKey ? ' El mes está en curso: se actualiza con lo que anotes.' : '');
   const head = el('div', { class: 'card rb-head' },
+    seg,
     el('div', { class: 'rb-nav' },
-      el('button', { type: 'button', class: 'btn ghost rb-arrow', 'data-f': 'prev', 'aria-label': 'Mes anterior (' + prev.label + ')', title: prev.label, onclick: () => go(prev.key, 'prev'), html: '&lsaquo;' }),
-      title,
-      el('button', { type: 'button', class: 'btn ghost rb-arrow', 'data-f': 'next', 'aria-label': 'Mes siguiente (' + next.label + ')', title: next.label, disabled: next.idx > monthOf(nowKey).idx, onclick: () => go(next.key, 'next'), html: '&rsaquo;' })),
-    el('p', { class: 'small muted', text: 'Lo que entró y salió en el mes en tus bancos y tarjetas, agrupado por rubro.' + (M.key === nowKey ? ' El mes está en curso: se actualiza con lo que anotes.' : '') }),
+      el('button', { type: 'button', class: 'btn ghost rb-arrow', 'data-f': 'prev', 'aria-label': (year ? 'Hasta ' : 'Mes anterior (') + prev.label + (year ? '' : ')'), title: prev.label, onclick: () => go(prev.key, 'prev'), html: '&lsaquo;' }),
+      el('div', { class: 'rb-title-w' }, title, year ? el('div', { class: 'rb-title-s', text: 'enero a ' + M.name }) : null),
+      el('button', { type: 'button', class: 'btn ghost rb-arrow', 'data-f': 'next', 'aria-label': (year ? 'Hasta ' : 'Mes siguiente (') + next.label + (year ? '' : ')'), title: next.label, disabled: next.idx > monthOf(nowKey).idx, onclick: () => go(next.key, 'next'), html: '&rsaquo;' })),
+    el('p', { class: 'small muted', text: sub }),
     el('div', { class: 'row' }, dl, M.key !== nowKey ? el('button', { type: 'button', class: 'btn ghost', text: 'Ir al mes de hoy', onclick: () => go(nowKey) }) : null));
-  const body = el('div', { class: 'card rb-body' }, el('div', { class: 'empty' }, el('div', { class: 'spin' }), 'Revisando bancos y tarjetas…'));
+  const body = el('div', { class: 'card rb-body' }, el('div', { class: 'empty' }, el('div', { class: 'spin' }), year ? 'Sumando los meses del año…' : 'Revisando bancos y tarjetas…'));
   host.append(head, body);
   const f = q && typeof q.get === 'function' ? q.get('f') : null;      // se llegó con una flecha: el foco vuelve a ella (teclado y lector de pantalla)
   if (f) { const b = head.querySelector('[data-f="' + (f === 'next' ? 'next' : 'prev') + '"]'); if (b) setTimeout(() => { try { (b.disabled ? head.querySelector('[data-f="prev"]') : b).focus(); } catch (e) { /* nada */ } }, 0); }
   const onOpen = (e) => { if (ctx.openSheet) ctx.openSheet(e.sid, { r: e.r, c: e.c }); };
   async function refresh() {
+    S.cache = new Map();
     try {
-      const data = await compute(ctx, M.key);
+      if (year) {
+        const Y = await computeYear(ctx, M.key, S.cache);
+        if (S.dead) return;
+        S.year = Y; dl.disabled = !Y.count;
+        body.replaceChildren(renderSummary(yearView(Y), { onOpen, afterKpis: monthTable(Y, (k) => go(k, null, false)) }));
+        return;
+      }
+      await loadSheets(ctx.engine);
+      const fresh = summarizeMonth(ctx.engine, M.key, { cache: S.cache });
       if (S.dead) return;
-      S.data = data; dl.disabled = !data.count;
-      body.replaceChildren(renderSummary(data, { onOpen }));
+      S.data = fresh; dl.disabled = !fresh.count;
+      const slot = el('div', { class: 'rb-ytd-slot' });
+      body.replaceChildren(renderSummary(fresh, { onOpen, afterKpis: slot }));
+      const Y = await computeYear(ctx, M.key, S.cache);                  // el acumulado del año, después (no frena la vista del mes)
+      if (S.dead) return;
+      S.year = Y;
+      slot.replaceWith(ytdStrip(Y, () => go(M.key, null, true)));
     } catch (e) {
       console.error(e);
       if (!S.dead) body.replaceChildren(el('p', { class: 'db-err', role: 'alert', text: 'No se pudo armar el resumen: ' + ((e && e.message) || e) }));
@@ -626,8 +770,10 @@ export async function openSummaryDialog(ctx, key, opts = {}) {
   dlg = ctx.modal(wrap, { title: 'Ingresos y egresos de ' + M.label, wide: true, onClose: typeof opts.onClose === 'function' ? opts.onClose : null });
   try {
     data = await compute(ctx, M.key);
-    body.replaceChildren(renderSummary(data, { onOpen: (e) => { if (dlg) dlg.close(); if (ctx.openSheet) ctx.openSheet(e.sid, { r: e.r, c: e.c }); } }));
+    const slot = el('div', { class: 'rb-ytd-slot' });
+    body.replaceChildren(renderSummary(data, { afterKpis: slot, onOpen: (e) => { if (dlg) dlg.close(); if (ctx.openSheet) ctx.openSheet(e.sid, { r: e.r, c: e.c }); } }));
     dl.disabled = !data.count;
+    try { const Y = await computeYear(ctx, M.key, new Map()); slot.replaceWith(ytdStrip(Y, () => { if (dlg) dlg.close(); ctx.navigate('rubros/' + M.key + '?vista=anio'); })); } catch (e) { slot.remove(); }
   } catch (e) {
     console.error(e);
     body.replaceChildren(el('p', { class: 'db-err', role: 'alert', text: 'No se pudo armar el resumen: ' + ((e && e.message) || e) }));

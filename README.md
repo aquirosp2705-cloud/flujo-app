@@ -174,6 +174,10 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## «Año Acumulado» en Disponible hoy (v34)
+
+- Última línea de la tarjeta «Disponible hoy»: **Año Acumulado** = celda H17 de CONSOL («dif acumulada» = patrimonio actual − diciembre base).
+
 ## Resumen con indicadores clave y acumulado del año (v33)
 
 - **Indicadores clave** arriba del Resumen: patrimonio (con su tendencia, el cambio frente al mes anterior y lo que va del año),

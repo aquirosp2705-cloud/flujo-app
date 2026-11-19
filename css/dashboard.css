@@ -373,3 +373,8 @@ button.db-kpi:active { transform: none; }
 .db-flow-spin { flex: none; width: 18px; height: 18px; border: 2.5px solid var(--line); border-top-color: var(--pri); border-radius: 50%; animation: sp .8s linear infinite; }
 @media (prefers-reduced-motion: reduce) { button.db-kpi { transition: none; } .db-flow-spin { animation-duration: 2.4s; } }
 @media (forced-colors: active) { .db-kpi { border: 1px solid CanvasText; } .db-kpi::before, .db-flow-bar > i { background: CanvasText; forced-color-adjust: none; } }
+
+/* ---------- v34: «Año Acumulado» (H17 de CONSOL), última línea de «Disponible hoy» ---------- */
+.db-hero-ytd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--db-hero-line); }
+.db-hero-ytd .k { font-size: 13.5px; font-weight: 650; color: var(--db-hero-muted); }
+.db-hero-ytd .v { font-size: 1.15rem; font-weight: 750; text-align: right; overflow-wrap: anywhere; }

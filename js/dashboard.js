@@ -944,6 +944,10 @@ export function mount(host, ctx, opts = {}) {
     if (isNum(s.extra.amount) && Math.abs(s.extra.amount) > EPS && isNum(s.nowTotal)) {
       secHero.append(el('p', { class: 'db-hero-note', text: `Con ${s.extra.label || 'otros fondos'} ${money(s.extra.amount)}: ${money(s.nowTotal)}` }));
     }
+    // v34: última línea, H17 de CONSOL («dif acumulada» = patrimonio actual − diciembre base), a pedido de ella con el nombre «Año Acumulado»
+    const ytd = s.patrimonio ? s.patrimonio.ytdAlt : null;
+    secHero.append(el('div', { class: 'db-hero-ytd' }, el('span', { class: 'k', text: 'Año Acumulado' }),
+      el('span', { class: 'v num', text: isNum(ytd) ? money(ytd, { sign: true }) : '—' })));
   }
 
   /* ---- indicadores clave (v33): patrimonio, resultado del mes, acumulado del año e inversiones ---- */

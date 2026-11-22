@@ -36,6 +36,11 @@ export function looksParsable(s) {
   return NUMLIKE.test(s) || BOOLLIKE.test(s) || DATELIKE.test(s) || TIMELIKE.test(s) || ERRLIKE.test(s) || CURLIKE.test(s) || s[0] === '=';
 }
 export const wrapText = (s) => '="' + s.replace(/"/g, '""') + '"';
+/** v37: cómo se escribe una hoja dentro de una fórmula: «Banco» tal cual; «Mis gastos », «Banco 2» entre comillas. */
+export const sheetRef = (name) => (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(name) && !/^[A-Za-z]{1,3}\d+$/.test(name) && !/^(true|false)$/i.test(name) ? name : "'" + String(name).replace(/'/g, "''") + "'");
+const SHEET_MARKS = new RegExp('[\\u0300-\\u036f]', 'g');
+/** Nombre de hoja comparable: sin tildes, sin espacios de más, en minúsculas («Mis gastos » = «mis  gastos»). */
+export const normSheetName = (s) => String(s).normalize('NFD').replace(SHEET_MARKS, '').replace(/\s+/g, ' ').trim().toLowerCase();
 export const unwrapText = (f) => { const m = WRAPPED.exec(f); return m ? m[1].replace(/""/g, '"') : null; };
 
 /* ---------- compatibilidad con Excel: SUMIF con rangos de distinto tamaño ----------
@@ -309,6 +314,45 @@ export class Engine {
   }
 
   sheet(sidOrName) { return this.byId.get(sidOrName) || this.byName.get(String(sidOrName).toLowerCase()); }
+  /** v37: nombre de hoja escrito a mano → la hoja: el nombre exacto, o sin fijarse en espacios de más, mayúsculas ni tildes
+   *  («Mis gastos» encuentra «Mis gastos »), o el nombre que se ve en la lista de hojas (`sheetAliases`, del catálogo). */
+  resolveSheetName(name) {
+    if (!name) return null;
+    const exact = this.byName.get(String(name).toLowerCase()); if (exact) return exact;
+    const n = normSheetName(name); if (!n) return null;
+    for (const sh of this.sheets) if (normSheetName(sh.name) === n) return sh;
+    const alias = this.sheetAliases && this.sheetAliases.get(n);
+    return alias ? this.sheet(alias) || null : null;
+  }
+  /** v37: en una fórmula, cada «Hoja!A1» escrito a mano queda con el nombre exacto de la hoja (entre comillas si lleva espacios):
+   *  «=+Mis gastos!H5» o «='mis gastos'!H5» → «='Mis gastos '!H5». Lo que no corresponde a ninguna hoja se deja igual. */
+  fixSheetRefs(f) {
+    if (typeof f !== 'string' || f[0] !== '=' || f.indexOf('!') < 0) return f;
+    let out = '', seg = 1, inStr = false;
+    for (let i = 0; i < f.length; i++) {
+      const ch = f[i];
+      if (inStr) { out += ch; if (ch === '"') { if (f[i + 1] === '"') { out += '"'; i++; } else { inStr = false; seg = out.length; } } continue; }
+      if (ch === '"') { inStr = true; out += ch; continue; }
+      if (ch === "'") {                                                     // 'Nombre de hoja'!
+        let j = i + 1, name = '';
+        while (j < f.length) { if (f[j] === "'") { if (f[j + 1] === "'") { name += "'"; j += 2; continue; } break; } name += f[j++]; }
+        if (j < f.length && f[j + 1] === '!') {
+          const sh = this.resolveSheetName(name);
+          out += sh ? sheetRef(sh.name) : f.slice(i, j + 1); out += '!'; i = j + 1; seg = out.length; continue;
+        }
+        out += f.slice(i, j + 1); i = j; seg = out.length; continue;
+      }
+      if (ch === '!') {                                                     // Nombre sin comillas: lo escrito desde el último signo
+        const part = out.slice(seg), lead = part.match(/^\s*/)[0], name = part.slice(lead.length);
+        const sh = name ? this.resolveSheetName(name) : null;
+        if (sh) out = out.slice(0, seg) + lead + sheetRef(sh.name);
+        out += '!'; seg = out.length; continue;
+      }
+      out += ch;
+      if ('=+-*/^(,;&<>:)%{}'.includes(ch)) seg = out.length;
+    }
+    return out;
+  }
   _addr(sh, r, c) { return { sheet: sh.hfId, row: r, col: c }; }
 
   /** valor calculado: number | string | boolean | null | {error:'#REF!'} */
@@ -335,6 +379,7 @@ export class Engine {
   set(sid, r, c, raw) { return this.setMatrix(sid, r, c, [[raw]]); }
   setMatrix(sid, r, c, matrix) {
     const sh = this._ld(sid);
+    matrix = matrix.map((row) => row.map((x) => (typeof x === 'string' && x[0] === '=' && x.indexOf('!') >= 0 ? this.fixSheetRefs(x) : x)));
     for (const row of matrix) for (const x of row) if (typeof x === 'string' && x[0] === '=') this._ensureRefsIn(x);
     const prepared = matrix.map((row, i) => row.map((x, j) => this._prep(sh, r + i, c + j, x)));
     const changes = this.hf.setCellContents({ sheet: sh.hfId, row: r, col: c }, prepared);

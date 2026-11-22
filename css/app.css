@@ -175,6 +175,12 @@ table.t td.r, table.t th.r { text-align: right; }
 
 .sheet-hint { padding: 7px 12px; font-size: 13px; color: var(--muted); background: var(--soft); border-bottom: 1px solid var(--line); }
 .sheet-hint b { color: var(--ink); }
+/* v37: aviso mientras se arma una fórmula con celdas de otra hoja */
+.sheet-hint.fx-draft { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; color: var(--ink); background: color-mix(in srgb, var(--acc) 14%, var(--card)); border-bottom-color: color-mix(in srgb, var(--acc) 45%, var(--line)); }
+.fx-draft-t { flex: 1 1 240px; min-width: 0; line-height: 1.35; }
+.fx-draft-b { display: flex; gap: 6px; flex: none; }
+.fx-draft-b .btn { padding: 6px 14px; min-height: 34px; }
+.fxg-xdraft .fxg-formula { border-color: var(--acc); box-shadow: 0 0 0 2px color-mix(in srgb, var(--acc) 30%, transparent); }
 
 /* v9: objetivos táctiles de 44 px, letra de 16 px en celular (iOS no hace zoom al enfocar) y área segura en el arranque */
 .btn, .chip, .seg button { min-height: 44px; }

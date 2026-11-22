@@ -1,7 +1,7 @@
 /* app.js — arranque, navegación y pantallas base de Flujo.
  * Los módulos grandes (store, sync-github, settings-ui, ledger, dashboard, quick, archive, export, pwa) se cargan de forma opcional:
  * si alguno falta, la app sigue funcionando sin esa pieza. */
-import { Engine, loadBundle } from './engine.js';
+import { Engine, loadBundle, normSheetName, colLetter } from './engine.js';
 import { SheetGrid } from './grid.js';
 import * as ui from './ui.js';
 import * as catalog from './catalog.js';
@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '36';
+const VERSION = '37';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -262,6 +262,8 @@ async function startWithBundle(bundle) {
   state.engine = new Engine(bundle.meta, bundle.sheetDatas);
   state.buildMs = performance.now() - t0;
   catalog.setCatalog(bundle.meta.catalog);
+  // v37: en una fórmula también vale el nombre que se ve en la lista de hojas («'Resumen del banco'!H4» = «BANCO!H4»)
+  state.engine.sheetAliases = new Map(state.engine.sheets.map((s) => [normSheetName(catalog.infoFor(s).short), s.name]));
   setBoot('Listo', 100);
   const S = state.mods['sync-github'], St = state.mods.store;
   if (St && state.store) {
@@ -527,6 +529,7 @@ async function route() {
   const host = $('#screens'); host.innerHTML = '';
   const view = el('div', { class: 'view', style: { display: 'contents' } }); host.append(view);   // contenedor propio de esta ruta
   const key = SCREENS[name] ? name : 'resumen';
+  if (key !== 'hoja') state.fxDraft = null;                 // v37: salir de las hojas deja la fórmula de otra hoja sin terminar
   $('#app').classList.toggle('route-hoja', key === 'hoja' || (key === 'archivo' && !!arg) || (key === 'resumen' && !state.mods.dashboard));   // el visor del archivo también es una hoja: barra superior compacta
   const navKey = key === 'hoja' || key === 'archivo' ? 'hojas' : key === 'rubros' && !document.querySelector('.side [data-nav="rubros"]') ? 'resumen' : key;
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === navKey || (key === 'rubros' && a.dataset.nav === 'resumen' && !a.closest('.side'))));
@@ -741,7 +744,17 @@ async function openGridIn(host, sidOrName, q) {
   const wrap = el('div', { class: 'screen flush' });
   const select = el('select', { 'aria-label': 'Cambiar de hoja' });
   for (const s of eng.sheets) { const hid = catalog.isHiddenSheet(s); if (hid && s.id !== sh.id && !state.showHidden) continue; select.append(el('option', { value: s.id, text: catalog.infoFor(s).short + (hid ? ' (oculta)' : ''), selected: s.id === sh.id })); }
-  select.addEventListener('change', () => { const info = catalog.infoFor(eng.sheet(select.value)); ctx.openSheet(select.value, { end: info.end }); });
+  // v37: escribiendo una fórmula, elegir otra hoja NO la guarda a medias: la fórmula viaja a esa hoja para tocar ahí la celda que se quiere usar
+  let held = null;
+  select.addEventListener('pointerdown', () => { held = state.grid ? state.grid.holdDraft() : null; });
+  select.addEventListener('blur', () => { if (held && !state.fxDraft && state.grid) state.grid.releaseDraft(); held = null; });
+  select.addEventListener('change', () => {
+    const d = state.grid ? state.grid.formulaDraft() : null;
+    state.fxDraft = d || null;
+    const info = catalog.infoFor(eng.sheet(select.value));
+    if (d && select.value === d.sid) ctx.openSheet(d.sid, { r: d.r, c: d.c });
+    else ctx.openSheet(select.value, { end: info.end });
+  });
   const nuevo = q.get('nuevo') === '1';                    // llegó desde «Anotar»: viene con la fila libre ya seleccionada
   const bar = el('div', { class: 'sheetbar' }, el('button', { class: 'btn ghost', 'aria-label': nuevo ? 'Volver a Anotar' : 'Volver a Hojas', html: nuevo ? '&lsaquo; Anotar' : '&lsaquo; Hojas', onclick: () => ctx.navigate(nuevo ? 'reg' : 'hojas') }), select);
   const gwrap = el('div', { class: 'sheetwrap' });
@@ -754,7 +767,22 @@ async function openGridIn(host, sidOrName, q) {
   grid.open(sh.id, { end: q.get('end') === '1' || (r == null && info.end), r: r != null ? +r : undefined, c: c != null ? +c : undefined });
   if (nuevo && r != null) grid.showRowLow(+r);              // se ven los movimientos anteriores encima de la fila libre
   state.grid = grid;
-  return { destroy() { grid.commitPending(); grid.destroy(); }, refresh() { grid.refresh(); } };
+  const dr = state.fxDraft;                                  // v37: fórmula que viene de otra hoja (o que vuelve a la suya)
+  if (dr) {
+    const back = (extra) => { state.fxDraft = extra ? { ...dr, ...extra } : null; ctx.openSheet(dr.sid, { r: dr.r, c: dr.c }); };
+    if (dr.sid === sh.id) { state.fxDraft = null; grid.resumeDraft(dr, { commit: !!dr.commit }); }
+    else {
+      const origin = catalog.infoFor(eng.sheet(dr.sid)).short + ' · ' + colLetter(dr.c) + (dr.r + 1);
+      const tip = el('div', { class: 'sheet-hint fx-draft', role: 'status' },
+        el('div', { class: 'fx-draft-t' }, el('b', { text: 'Fórmula de ' + origin + '. ' }), 'Toca la celda de esta hoja que quieres sumar o restar; puedes seguir con + o − y tocar más celdas.'),
+        el('div', { class: 'fx-draft-b' },
+          el('button', { class: 'btn primary', text: 'Listo', onclick: () => back({ text: grid.formulaDraft().text, commit: true }) }),
+          el('button', { class: 'btn ghost', text: 'Cancelar', onclick: () => back(null) })));
+      wrap.insertBefore(tip, gwrap);
+      grid.openDraft(dr, { onDone: (text) => back({ text, commit: true }), onCancel: () => back(null) });
+    }
+  }
+  return { destroy() { if (state.fxDraft) grid.dropPending(); else grid.commitPending(); grid.destroy(); }, refresh() { grid.refresh(); } };
 }
 
 /* ------------------------------------------------------------------ ajustes */

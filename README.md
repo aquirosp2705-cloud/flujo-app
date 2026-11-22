@@ -174,6 +174,19 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Fórmulas escritas a mano: tocar celdas y usar otras hojas (v37)
+
+- Escribiendo una fórmula (empieza con `=`, `+` o `-`), **tocar una celda con el dedo** la agrega, igual que el clic del ratón:
+  `+`, tocar, `-`, tocar… Antes, en el celular el toque guardaba la fórmula a medias (`+` como texto o `=sum(` con error).
+- **Celdas de otra hoja, como en Excel:** con la fórmula a medio escribir se elige otra hoja en la lista; la fórmula viaja con ella
+  (aviso arriba con **Listo** y **Cancelar**), el toque agrega `'Hoja'!A1` y Enter o «Listo» la guarda en la celda de origen y vuelve
+  ahí. Volver a la hoja de origen con la lista sigue la fórmula; salir a otra pantalla la descarta. Antes, cambiar de hoja la guardaba a medias.
+- **Nombres de hoja escritos a mano:** valen sin comillas, sin espacios de más, sin importar mayúsculas ni tildes y con el nombre que
+  se ve en la lista de hojas (`=+Mis gastos!H5`, `='mis gastos'!H5`); se guardan con el nombre exacto (`'Mis gastos '!H5`).
+  `Engine.fixSheetRefs` / `resolveSheetName` (alias del catálogo en `engine.sheetAliases`).
+- Una fórmula que vino del Excel guardada como texto pasa a calcular al confirmarla otra vez (tocar dos veces o F2 y Enter).
+- Pruebas: `_e2e/formulas_e2e.py` (32, computadora y celular táctil).
+
 ## «Disponible hoy» más compacta (v36)
 
 - Número más pequeño (1.6rem; 1.75rem en la computadora) y la variación al lado del número: la tarjeta es más baja.

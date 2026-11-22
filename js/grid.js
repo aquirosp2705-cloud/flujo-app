@@ -10,7 +10,7 @@
  *   su suma, promedio y cuenta); para copiar hacia abajo está «Rellenar ↓». Barra de herramientas con deshacer, copiar, pegar, zoom, ir al final.
  * Formato: negrita, color de letra, relleno y bordes (raya abajo, raya arriba, arriba y abajo, todos, contorno, sin bordes); se deshace con Ctrl+Z.
  */
-import { cellKey as K, colLetter, addrToA1, a1ToAddr } from './engine.js';
+import { cellKey as K, colLetter, addrToA1, a1ToAddr, sheetRef } from './engine.js';
 import { fmtCell, styleCss, editText, parseInput, isDateFormat } from './format.js';
 import { toSpanish } from './formula-es.js';
 
@@ -122,15 +122,24 @@ export class SheetGrid {
     on(this.kb, 'cut', (e) => this._onCopy(e, true));
     on(this.kb, 'paste', (e) => { e.preventDefault(); this._paste(e.clipboardData.getData('text/plain')); });
     on(this.ed, 'keydown', (e) => this._onEdKey(e));
-    on(this.ed, 'blur', () => { if (this.edit) this._commitEdit(null); });
+    // v37: no se guarda a medias si el dedo está señalando una celda para la fórmula o si la fórmula sigue en otra hoja
+    on(this.ed, 'blur', () => { if (this.edit && !this._held && !(this._touch && this._touch.point === this.ed)) this._commitEdit(null); });
     on(this.ed, 'input', () => { this._pointReset(); if (this.edit && !this.barEditing) this.bar.value = this.ed.value; this._paintRefs(this.ed.value); });
     on(this.bar, 'focus', () => { this.barEditing = true; this.barDirty = false; if (!this.opts.readOnly) this._paintRefs(this.bar.value); });
     on(this.bar, 'input', () => { this._pointReset(); this.barDirty = true; this._paintRefs(this.bar.value); });
     on(this.bar, 'keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); this._commitBar(); this._focusKb(); this._move(1, 0); }
+      if (this.xdraft) {                                    // v37: fórmula de otra hoja: Enter la guarda allá, Esc la deja como estaba
+        if (e.key === 'Enter') { e.preventDefault(); this._draftDone(); }
+        else if (e.key === 'Escape') { e.preventDefault(); this._draftCancel(); }
+        return;
+      }
+      if (e.key === 'Enter') { e.preventDefault(); if (!this.barDirty && this._isTextFormulaAt(this.anchor.r, this.anchor.c)) this.barDirty = true; this._commitBar(); this._focusKb(); this._move(1, 0); }
       else if (e.key === 'Escape') { e.preventDefault(); this.barDirty = false; this.bar.blur(); this._focusKb(); this._updateBar(); }
     });
-    on(this.bar, 'blur', () => { this._commitBar(); this.barEditing = false; this._updateBar(); if (!this.edit) this._paintRefs(''); });
+    on(this.bar, 'blur', () => {
+      if (this.xdraft || this._held || (this._touch && this._touch.point === this.bar)) return;      // v37: la fórmula sigue abierta
+      this._commitBar(); this.barEditing = false; this._updateBar(); if (!this.edit) this._paintRefs('');
+    });
     on(this.nameBox, 'keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.goTo(this.nameBox.value); this._focusKb(); } else if (e.key === 'Escape') { this._updateName(); this._focusKb(); } });
     on(this.nameBox, 'focus', () => this.nameBox.select());
     if (this.tools) on(this.tools, 'click', (e) => { const b = e.target.closest('button[data-act]'); if (b) this._tool(b.dataset.act); });
@@ -138,7 +147,57 @@ export class SheetGrid {
   }
 
   /** Confirma una edición a medias (celda o barra de fórmulas) antes de salir de la hoja. */
-  commitPending() { if (this.edit) this._commitEdit(null); this._commitBar(); }
+  commitPending() { if (this.xdraft) return; if (this.edit) this._commitEdit(null); this._commitBar(); }
+
+  /* ------------------------------------------------------- v37: fórmulas que usan celdas de otra hoja (como en Excel)
+   * Mientras se escribe una fórmula se puede elegir otra hoja en la lista: la fórmula viaja con ella, un toque en una celda de esa hoja
+   * agrega «'Hoja'!A1» y Enter (o «Listo») la guarda en la celda de origen. La app (app.js) lleva la fórmula de una hoja a otra. */
+  /** Fórmula a medio escribir: { sid, r, c, text, name } (hoja y celda de ORIGEN) o null. */
+  formulaDraft() {
+    if (this.xdraft) return { ...this.xdraft, text: this.bar.value };
+    return this._held || this._draftNow();
+  }
+  _draftNow() {
+    if (!this.sh || this.opts.readOnly) return null;
+    let text = null, r, c;
+    if (this.edit && this.ed.style.display !== 'none') { text = this.ed.value; r = this.edit.r; c = this.edit.c; }
+    else if (this.barEditing && this.barDirty) { const m = this.sh.mergeAt(this.anchor.r, this.anchor.c); r = m ? m.r0 : this.anchor.r; c = m ? m.c0 : this.anchor.c; text = this.bar.value; }
+    if (!text || !'=+-'.includes(text[0])) return null;
+    return { sid: this.sid, r, c, text, name: this.sh.name };
+  }
+  /** Justo antes de que la lista de hojas tome el foco: la fórmula a medias no se guarda al perderlo. */
+  holdDraft() { this._held = this.xdraft ? null : this._draftNow(); return this._held; }
+  /** No se cambió de hoja: se sigue escribiendo donde estaba. */
+  releaseDraft() {
+    const d = this._held; this._held = null; if (!d) return;
+    const el = this.edit ? this.ed : this.bar;
+    try { el.focus({ preventScroll: true }); const n = el.value.length; el.setSelectionRange(n, n); } catch (e) { /* */ }
+  }
+  /** La fórmula siguió en otra hoja: aquí no se guarda nada. */
+  dropPending() { this._held = null; if (this.edit) { this.edit = null; this.ed.style.display = 'none'; } this.barDirty = false; }
+  /** Esta hoja recibe la fórmula de otra: la barra de arriba la muestra y los toques agregan celdas de ESTA hoja. */
+  openDraft(d, { onDone, onCancel } = {}) {
+    this.xdraft = { sid: d.sid, r: d.r, c: d.c, name: d.name, text: d.text };
+    this._draftCb = { onDone, onCancel };
+    this.root.classList.add('fxg-xdraft');
+    this.bar.value = d.text; this.barEditing = true; this.barDirty = false;
+    this._pointReset();
+    try { this.bar.focus({ preventScroll: true }); const n = d.text.length; this.bar.setSelectionRange(n, n); } catch (e) { /* */ }
+  }
+  _draftDone() { const cb = this._draftCb, t = this.bar.value; if (cb && cb.onDone) cb.onDone(t); }
+  _draftCancel() { const cb = this._draftCb; if (cb && cb.onCancel) cb.onCancel(); }
+  /** De vuelta en la hoja de origen: sigue escribiendo la fórmula (commit=false) o la guarda en su celda (commit=true). */
+  resumeDraft(d, { commit = false } = {}) {
+    this.select(d.r, d.c, null, null, true);
+    if (commit) { this._applyText(d.r, d.c, d.text); return; }
+    if (COARSE() && this.bar) {                                  // en el celular se escribe en la barra de arriba
+      this.bar.value = d.text; this.barEditing = true;
+      try { this.bar.focus({ preventScroll: true }); const n = d.text.length; this.bar.setSelectionRange(n, n); } catch (e) { /* */ }
+      this.barDirty = true; this._paintRefs(d.text);
+    } else this._beginEdit('enter', d.text);
+  }
+  /** ¿La celda tiene una fórmula guardada como texto (vino así del Excel)? Al confirmarla otra vez pasa a calcular. */
+  _isTextFormulaAt(r, c) { const x = this.eng.raw(this.sid, r, c); return typeof x === 'string' && x[0] === '=' && this.sh.textCells.has(K(r, c)); }
 
   destroy() {
     for (const [t, ev, fn, o] of this._listeners) t.removeEventListener(ev, fn, o);
@@ -443,7 +502,8 @@ export class SheetGrid {
    * Mayús+clic, arrastrar o una flecha INSERTAN su dirección (H2050, A1:B3) en vez de terminar la edición; otro clic seguido la cambia por la nueva. */
   _pointField() {
     let el = null;
-    if (this.edit && this.ed.style.display !== 'none') el = this.ed;
+    if (this.xdraft) el = this.bar;                          // v37: fórmula que viene de otra hoja
+    else if (this.edit && this.ed.style.display !== 'none') el = this.ed;
     else if (this.barEditing && document.activeElement === this.bar && !this.opts.readOnly) el = this.bar;
     if (!el) return null;
     const v = el.value, a = el.selectionStart, b = el.selectionEnd;
@@ -457,7 +517,8 @@ export class SheetGrid {
     const m = this.sh.mergeAt(r, c); if (m) { r = m.r0; c = m.c0; }
     const a1 = (rr, cc) => colLetter(cc) + (rr + 1);
     const lo = { r: Math.min(r, r2), c: Math.min(c, c2) }, hi = { r: Math.max(r, r2), c: Math.max(c, c2) };
-    const text = (lo.r === hi.r && lo.c === hi.c) ? a1(lo.r, lo.c) : a1(lo.r, lo.c) + ':' + a1(hi.r, hi.c);
+    const pre = this.xdraft ? sheetRef(this.sh.name) + '!' : '';            // v37: en otra hoja la celda lleva el nombre de la hoja
+    const text = pre + ((lo.r === hi.r && lo.c === hi.c) ? a1(lo.r, lo.c) : a1(lo.r, lo.c) + ':' + a1(hi.r, hi.c));
     const v = el.value, p = this._point;
     let start = el.selectionStart, end = el.selectionEnd;
     if (p && p.el === el && v.slice(p.start, p.end) === p.text && start === p.end && end === p.end) { start = p.start; end = p.end; }
@@ -465,10 +526,10 @@ export class SheetGrid {
     const pos = start + text.length;
     try { el.setSelectionRange(pos, pos); } catch (e) { /* sin selección */ }
     this._point = { el, start, end: pos, text, r: lo.r, c: lo.c };
-    if (el === this.ed) this.bar.value = el.value; else this.barDirty = true;
     this._paintRefs(el.value);
     this._box(this.pointEl, { r0: lo.r, c0: lo.c, r1: hi.r, c1: hi.c });
-    try { el.focus({ preventScroll: true }); } catch (e) { /* */ }
+    try { el.focus({ preventScroll: true }); el.setSelectionRange(pos, pos); } catch (e) { /* */ }
+    if (el === this.ed) this.bar.value = el.value; else { this.barEditing = true; this.barDirty = true; }   // después del foco (al enfocar se reinicia barDirty)
   }
   _pointReset() { this._point = null; if (this.pointEl) this.pointEl.style.display = 'none'; }
   /** Enciende con un recuadro de color cada celda o rango de esta hoja que usa la fórmula en edición ('' = apagar). */
@@ -516,6 +577,15 @@ export class SheetGrid {
         return;
       }
     }
+    if (e.pointerType !== 'mouse') {                        // v37: con el dedo también: tocar una celda la agrega a la fórmula (al soltar, si no fue para desplazarse)
+      const pf = this._pointField();
+      if (pf) { e.preventDefault(); this._touch = { x: e.clientX, y: e.clientY, t: Date.now(), cell, sx: this.scroll.scrollLeft, sy: this.scroll.scrollTop, point: pf }; return; }
+    }
+    if (this.xdraft && e.pointerType === 'mouse') {        // fórmula de otra hoja y el cursor no está después de un signo
+      e.preventDefault();
+      this._toast('Escribe un signo (+ − * /) antes de tocar la celda que quieres agregar.');
+      return;
+    }
     if (this.edit) this._commitEdit(null);
     if (e.pointerType === 'mouse') {
       if (e.button !== 0) return;
@@ -557,6 +627,11 @@ export class SheetGrid {
     if (this._touch) {
       const t = this._touch; this._touch = null;
       const moved = Math.abs(e.clientX - t.x) + Math.abs(e.clientY - t.y) + Math.abs(this.scroll.scrollLeft - t.sx) + Math.abs(this.scroll.scrollTop - t.sy);
+      if (t.point) {                                         // v37: escribiendo una fórmula: el toque agrega la celda; si se desplazó, se sigue escribiendo
+        if (moved < 10 && Date.now() - t.t < 900) this._pointInsert(t.point, t.cell.r, t.cell.c);
+        else { try { t.point.focus({ preventScroll: true }); } catch (err) { /* */ } }
+        return;
+      }
       if (moved < 10 && Date.now() - t.t < 600 && e.target !== this.ed) {
         const same = this.anchor.r === t.cell.r && this.anchor.c === t.cell.c && this.rootHasFocusRing;
         this._focusKb();
@@ -582,6 +657,7 @@ export class SheetGrid {
   _onDblClick(e) {
     const cell = this._cellAt(e);
     if (cell.onScrollbar || this.opts.readOnly) return;
+    if (this.xdraft || this._pointField()) return;           // v37: escribiendo una fórmula, el doble clic no abre otra celda
     this.anchor = { r: cell.r, c: cell.c }; this.focus = { ...this.anchor };
     this._beginEdit('edit', null);
   }
@@ -596,7 +672,9 @@ export class SheetGrid {
   }
   /** El sistema canceló el gesto (p. ej. iOS lo tomó para desplazar): se suelta sin hacer nada. */
   _onPointerCancel() {
+    const t = this._touch;
     this._touch = null;
+    if (t && t.point) { try { t.point.focus({ preventScroll: true }); } catch (e) { /* */ } }   // v37: se desplazó escribiendo una fórmula
     if (!this.drag) return;
     if (this.drag.type === 'fill') this.fillEl.style.display = 'none';
     if (this.drag.type === 'colresize') this.colHdr.style.cursor = '';
@@ -649,6 +727,13 @@ export class SheetGrid {
   _onKey(e) {
     if (!this.sh) return;
     const ctrl = e.ctrlKey || e.metaKey, shift = e.shiftKey, k = e.key;
+    if (this.xdraft) {                                       // v37: fórmula de otra hoja: las teclas siguen escribiéndola en la barra
+      if (k === 'Enter') { e.preventDefault(); this._draftDone(); }
+      else if (k === 'Escape') { e.preventDefault(); this._draftCancel(); }
+      else if (!ctrl && (k.length === 1 || k === 'Backspace' || k === 'Dead' || k === 'Process')) { try { this.bar.focus({ preventScroll: true }); const n = this.bar.value.length; this.bar.setSelectionRange(n, n); } catch (err) { /* */ } }
+      else if (!ctrl) e.preventDefault();
+      return;
+    }
     const arrows = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
     if (arrows[k]) { e.preventDefault(); this._move(arrows[k][0], arrows[k][1], shift, ctrl); return; }
     if (k === 'Tab') { e.preventDefault(); this._move(0, shift ? -1 : 1); return; }
@@ -679,6 +764,11 @@ export class SheetGrid {
   /* ------------------------------------------------------------------ edición */
   _beginEdit(mode, initial) {
     if (this.opts.readOnly || !this.sh) return;
+    if (this.xdraft) {                                       // v37: aquí no se edita otra celda: se sigue la fórmula de la otra hoja
+      try { this.bar.focus({ preventScroll: true }); const n = this.bar.value.length; this.bar.setSelectionRange(n, n); } catch (e) { /* */ }
+      if (initial) { this.bar.value += initial; this.bar.dispatchEvent(new Event('input')); }
+      return;
+    }
     // En pantallas táctiles el teclado virtual taparía una celda de la mitad inferior: se edita en la barra de fórmulas (arriba).
     if (initial == null && window.matchMedia && matchMedia('(pointer: coarse)').matches && this.bar) {
       this._ensureVisible(this.anchor.r, this.anchor.c);
@@ -722,7 +812,7 @@ export class SheetGrid {
     this.edit = null; this._pointReset(); this._paintRefs('');
     const text = this.ed.value;
     this.ed.style.display = 'none';
-    if (text !== e.orig) this._applyText(e.r, e.c, text);
+    if (text !== e.orig || (text === e.orig && this._isTextFormulaAt(e.r, e.c))) this._applyText(e.r, e.c, text);   // v37: fórmula que era texto: al confirmarla calcula
     this._focusKb();
     this._updateBar();
     if (move) this._move(move.dr, move.dc);
@@ -733,7 +823,7 @@ export class SheetGrid {
     this.barDirty = false;
     const m = this.sh.mergeAt(this.anchor.r, this.anchor.c);
     const r = m ? m.r0 : this.anchor.r, c = m ? m.c0 : this.anchor.c;
-    if (this.bar.value !== this._rawText(r, c)) this._applyText(r, c, this.bar.value);
+    if (this.bar.value !== this._rawText(r, c) || this._isTextFormulaAt(r, c)) this._applyText(r, c, this.bar.value);
   }
   _applyText(r, c, text) {
     if (this.opts.readOnly) return;
@@ -742,7 +832,7 @@ export class SheetGrid {
     let { raw, nf } = parseInput(text, st);
     if (typeof raw === 'number' && sh.textCells.has(K(r, c)) && /^\d+$/.test(text.trim())) raw = text.trim();   // números de cuenta con ceros a la izquierda siguen siendo texto
     const cur = eng.raw(sid, r, c);
-    if (raw === cur) return;
+    if (raw === cur && !(typeof raw === 'string' && raw[0] === '=' && sh.textCells.has(K(r, c)))) return;
     let changes;
     try { changes = eng.set(sid, r, c, raw); } catch (err) { this._toast('No se pudo guardar: ' + err.message); return; }
     const useNf = (!st.nf || st.nf === 'General') ? this._inferNf(r, c, raw, nf, text) : null;
@@ -1055,6 +1145,7 @@ export class SheetGrid {
     if (act === 'zin') return this.setZoom(this.zoom + 0.1);
     if (act === 'zout') return this.setZoom(this.zoom - 0.1);
     if (act === 'end') return this.goEnd();
+    if (this.xdraft) { this._toast('Primero termina la fórmula: «Listo» la guarda y «Cancelar» la deja como estaba.'); return; }   // v37
     if (act === 'find') { if (this.opts.onFind) this.opts.onFind(); return; }
     if (act === 'copy') return this._copyButton();
     if (act === 'paste') return this._pasteButton();

@@ -37,7 +37,7 @@ export function looksParsable(s) {
 }
 export const wrapText = (s) => '="' + s.replace(/"/g, '""') + '"';
 /** v37: cómo se escribe una hoja dentro de una fórmula: «Banco» tal cual; «Mis gastos », «Banco 2» entre comillas. */
-export const sheetRef = (name) => (/^[A-Za-z_][A-Za-z0-9_.]*$/.test(name) && !/^[A-Za-z]{1,3}\d+$/.test(name) && !/^(true|false)$/i.test(name) ? name : "'" + String(name).replace(/'/g, "''") + "'");
+export const sheetRef = (name) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !/^[A-Za-z]{1,3}\d+$/.test(name) && !/^(true|false|verdadero|falso)$/i.test(name) ? name : "'" + String(name).replace(/'/g, "''") + "'");   // v38: con punto o Verdadero/Falso, entre comillas (el motor no los entiende sueltos)
 const SHEET_MARKS = new RegExp('[\\u0300-\\u036f]', 'g');
 /** Nombre de hoja comparable: sin tildes, sin espacios de más, en minúsculas («Mis gastos » = «mis  gastos»). */
 export const normSheetName = (s) => String(s).normalize('NFD').replace(SHEET_MARKS, '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -318,11 +318,14 @@ export class Engine {
    *  («Mis gastos» encuentra «Mis gastos »), o el nombre que se ve en la lista de hojas (`sheetAliases`, del catálogo). */
   resolveSheetName(name) {
     if (!name) return null;
-    const exact = this.byName.get(String(name).toLowerCase()); if (exact) return exact;
-    const n = normSheetName(name); if (!n) return null;
-    for (const sh of this.sheets) if (normSheetName(sh.name) === n) return sh;
-    const alias = this.sheetAliases && this.sheetAliases.get(n);
-    return alias ? this.sheet(alias) || null : null;
+    const s = String(name);
+    for (const sh of this.sheets) if (sh.name === s) return sh;                 // 1) nombre real tal cual
+    const n = normSheetName(s); if (!n) return null;
+    const alias = this.sheetAliases && this.sheetAliases.get(n);                // 2) el nombre que ella ve en la lista (hojas visibles)
+    if (alias && this.sheet(alias)) return this.sheet(alias);
+    const exact = this.byName.get(s.toLowerCase()); if (exact) return exact;     // 3) nombre real sin fijarse en mayúsculas (como Excel)
+    for (const sh of this.sheets) if (normSheetName(sh.name) === n) return sh;  // 4) sin tildes ni espacios de más
+    return null;
   }
   /** v37: en una fórmula, cada «Hoja!A1» escrito a mano queda con el nombre exacto de la hoja (entre comillas si lleva espacios):
    *  «=+Mis gastos!H5» o «='mis gastos'!H5» → «='Mis gastos '!H5». Lo que no corresponde a ninguna hoja se deja igual. */
@@ -344,7 +347,8 @@ export class Engine {
       }
       if (ch === '!') {                                                     // Nombre sin comillas: lo escrito desde el último signo
         const part = out.slice(seg), lead = part.match(/^\s*/)[0], name = part.slice(lead.length);
-        const sh = name ? this.resolveSheetName(name) : null;
+        const isErr = name[0] === '#' || /#[A-Za-z\/]*$/.test(out.slice(0, seg));   // v38: #REF!, #DIV/0!… son errores, no hojas
+        const sh = name && !isErr ? this.resolveSheetName(name) : null;
         if (sh) out = out.slice(0, seg) + lead + sheetRef(sh.name);
         out += '!'; seg = out.length; continue;
       }

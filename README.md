@@ -174,6 +174,21 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Correcciones de las fórmulas a mano tras revisión independiente (v38)
+
+- Un dato con signo (`-50`, `+12,5`, un teléfono `+593…`) ya no se toma como fórmula: al cambiar de hoja se guarda como siempre
+  (en v37 se perdía). Solo viaja a otra hoja una fórmula de verdad (o un `+`/`-` recién escrito).
+- La fórmula se retiene solo cuando el foco pasa de verdad a la lista de hojas (`blur` con `relatedTarget` = la lista,
+  `opts.keepDraftFor`). Si la lista se cierra sin cambiar de hoja: volver al campo sigue la fórmula (la barra conserva «modificada»),
+  tocar una celda tras un signo la agrega (como Excel) y cualquier otro destino la guarda en SU celda; nunca queda pendiente sobre otra.
+- La lista usa la cuadrícula de su propia pantalla (no `state.grid`), y una hoja que termina de cargar cuando ya se navegó a otra no
+  toca `state.grid`.
+- Con el dedo, el cuadrito de la esquina (≈48 px) mientras se escribe una fórmula agrega la celda en vez de guardarla a medias;
+  con una fórmula de otra hoja abierta no rellena, pegar va a la fórmula y cortar no hace nada.
+- Nombres de hoja: el nombre real tal cual gana; luego el de la lista (solo hojas visibles); luego el real sin mayúsculas, tildes ni
+  espacios. Nombres con punto o «Verdadero»/«Falso» van entre comillas. `#REF!`, `#DIV/0!` y demás errores no se tocan.
+- Pruebas: `_e2e/formulas_e2e.py` (50, computadora y celular).
+
 ## Fórmulas escritas a mano: tocar celdas y usar otras hojas (v37)
 
 - Escribiendo una fórmula (empieza con `=`, `+` o `-`), **tocar una celda con el dedo** la agrega, igual que el clic del ratón:

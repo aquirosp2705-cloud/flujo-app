@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '37';
+const VERSION = '38';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -263,7 +263,8 @@ async function startWithBundle(bundle) {
   state.buildMs = performance.now() - t0;
   catalog.setCatalog(bundle.meta.catalog);
   // v37: en una fórmula también vale el nombre que se ve en la lista de hojas («'Resumen del banco'!H4» = «BANCO!H4»)
-  state.engine.sheetAliases = new Map(state.engine.sheets.map((s) => [normSheetName(catalog.infoFor(s).short), s.name]));
+  // v38: solo hojas visibles; un alias que coincide con el nombre de otra hoja apunta a la hoja de la lista (la que ella ve con ese nombre)
+  state.engine.sheetAliases = new Map(state.engine.sheets.filter((s) => !catalog.isHiddenSheet(s)).map((s) => [normSheetName(catalog.infoFor(s).short), s.name]));
   setBoot('Listo', 100);
   const S = state.mods['sync-github'], St = state.mods.store;
   if (St && state.store) {
@@ -740,16 +741,17 @@ async function openGridIn(host, sidOrName, q) {
     host.append(el('div', { class: 'screen' }, el('div', { class: 'empty' }, el('div', { class: 'spin' }), 'Cargando la hoja…')));
     await eng.loadSheetAsync(sh.id);
     host.innerHTML = '';
+    if (!host.isConnected) return null;                    // v38: mientras cargaba ya se fue a otra pantalla: no se arma nada (ni se toca state.grid)
   }
   const wrap = el('div', { class: 'screen flush' });
   const select = el('select', { 'aria-label': 'Cambiar de hoja' });
   for (const s of eng.sheets) { const hid = catalog.isHiddenSheet(s); if (hid && s.id !== sh.id && !state.showHidden) continue; select.append(el('option', { value: s.id, text: catalog.infoFor(s).short + (hid ? ' (oculta)' : ''), selected: s.id === sh.id })); }
   // v37: escribiendo una fórmula, elegir otra hoja NO la guarda a medias: la fórmula viaja a esa hoja para tocar ahí la celda que se quiere usar
-  let held = null;
-  select.addEventListener('pointerdown', () => { held = state.grid ? state.grid.holdDraft() : null; });
-  select.addEventListener('blur', () => { if (held && !state.fxDraft && state.grid) state.grid.releaseDraft(); held = null; });
+  // v38: la cuadrícula retiene la fórmula solo cuando el foco pasa de verdad a esta lista (blur con relatedTarget = lista); se usa la
+  // cuadrícula de ESTA pantalla (no state.grid, que podría ser de otra)
+  select.addEventListener('blur', (e) => { if (!state.fxDraft) grid.releaseDraft(e.relatedTarget); });   // no se cambió de hoja: seguir o guardar en su celda
   select.addEventListener('change', () => {
-    const d = state.grid ? state.grid.formulaDraft() : null;
+    const d = grid.formulaDraft();
     state.fxDraft = d || null;
     const info = catalog.infoFor(eng.sheet(select.value));
     if (d && select.value === d.sid) ctx.openSheet(d.sid, { r: d.r, c: d.c });
@@ -760,14 +762,14 @@ async function openGridIn(host, sidOrName, q) {
   const gwrap = el('div', { class: 'sheetwrap' });
   const hint = nuevo && q.get('r') != null ? el('div', { class: 'sheet-hint', role: 'status' }, el('b', { text: 'Fila ' + (+q.get('r') + 1) + ' (la primera libre): ' }), 'escribe ahí el movimiento. El saldo se calcula solo.') : null;
   wrap.append(...[bar, hint, gwrap].filter(Boolean)); host.append(wrap);
-  const grid = new SheetGrid(gwrap, eng, { onChange: () => ctx.changed([sh.id], 'grid'), onFind: () => ctx.navigate('buscar'), onToast: (m) => toast(m) });
+  const grid = new SheetGrid(gwrap, eng, { onChange: () => ctx.changed([sh.id], 'grid'), onFind: () => ctx.navigate('buscar'), onToast: (m) => toast(m), keepDraftFor: (t) => t === select });
   const info = catalog.infoFor(sh);
   const r = q.get('r'), c = q.get('c');
   if (host.isConnected) $('#title').textContent = info.short;
   grid.open(sh.id, { end: q.get('end') === '1' || (r == null && info.end), r: r != null ? +r : undefined, c: c != null ? +c : undefined });
   if (nuevo && r != null) grid.showRowLow(+r);              // se ven los movimientos anteriores encima de la fila libre
-  state.grid = grid;
-  const dr = state.fxDraft;                                  // v37: fórmula que viene de otra hoja (o que vuelve a la suya)
+  if (host.isConnected) state.grid = grid;
+  const dr = state.fxDraft;                                 // v37: fórmula que viene de otra hoja (o que vuelve a la suya)
   if (dr) {
     const back = (extra) => { state.fxDraft = extra ? { ...dr, ...extra } : null; ctx.openSheet(dr.sid, { r: dr.r, c: dr.c }); };
     if (dr.sid === sh.id) { state.fxDraft = null; grid.resumeDraft(dr, { commit: !!dr.commit }); }

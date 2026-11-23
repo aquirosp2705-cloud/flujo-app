@@ -119,13 +119,30 @@ export class SheetGrid {
     // texto que llega sin keydown útil (teclados móviles "Unidentified", IME, dictado): inicia la edición con ese texto
     on(this.kb, 'input', () => { const v = this.kb.value; this.kb.value = ''; if (v && !this.edit && !this.opts.readOnly) this._beginEdit('enter', v); });
     on(this.kb, 'copy', (e) => this._onCopy(e, false));
-    on(this.kb, 'cut', (e) => this._onCopy(e, true));
-    on(this.kb, 'paste', (e) => { e.preventDefault(); this._paste(e.clipboardData.getData('text/plain')); });
+    on(this.kb, 'cut', (e) => { if (this.xdraft) { e.preventDefault(); this._toast('Primero termina la fórmula: «Listo» la guarda y «Cancelar» la deja como estaba.'); return; } this._onCopy(e, true); });
+    on(this.kb, 'paste', (e) => {
+      e.preventDefault();
+      const t = e.clipboardData.getData('text/plain');
+      if (this.xdraft) {                                    // v38: con una fórmula de otra hoja, lo pegado va a la fórmula, no a las celdas de esta hoja
+        try { this.bar.focus({ preventScroll: true }); const n = this.bar.value.length; this.bar.setSelectionRange(n, n); } catch (err) { /* */ }
+        this.bar.value += t.replace(/[\r\n]+/g, ' ').trim(); this.bar.dispatchEvent(new Event('input'));
+        return;
+      }
+      this._paste(t);
+    });
     on(this.ed, 'keydown', (e) => this._onEdKey(e));
     // v37: no se guarda a medias si el dedo está señalando una celda para la fórmula o si la fórmula sigue en otra hoja
-    on(this.ed, 'blur', () => { if (this.edit && !this._held && !(this._touch && this._touch.point === this.ed)) this._commitEdit(null); });
+    on(this.ed, 'blur', (e) => {
+      if (!this.edit || this._held || (this._touch && this._touch.point === this.ed)) return;
+      if (this._keepFor(e.relatedTarget)) return;            // v38: el foco pasó a la lista de hojas con una fórmula a medias
+      this._commitEdit(null);
+    });
     on(this.ed, 'input', () => { this._pointReset(); if (this.edit && !this.barEditing) this.bar.value = this.ed.value; this._paintRefs(this.ed.value); });
-    on(this.bar, 'focus', () => { this.barEditing = true; this.barDirty = false; if (!this.opts.readOnly) this._paintRefs(this.bar.value); });
+    on(this.bar, 'focus', () => {
+      this.barEditing = true;
+      if (this._barResume) this._barResume = false; else this.barDirty = false;      // v38: vuelve a una fórmula retenida: sigue «modificada»
+      if (!this.opts.readOnly) this._paintRefs(this.bar.value);
+    });
     on(this.bar, 'input', () => { this._pointReset(); this.barDirty = true; this._paintRefs(this.bar.value); });
     on(this.bar, 'keydown', (e) => {
       if (this.xdraft) {                                    // v37: fórmula de otra hoja: Enter la guarda allá, Esc la deja como estaba
@@ -136,8 +153,9 @@ export class SheetGrid {
       if (e.key === 'Enter') { e.preventDefault(); if (!this.barDirty && this._isTextFormulaAt(this.anchor.r, this.anchor.c)) this.barDirty = true; this._commitBar(); this._focusKb(); this._move(1, 0); }
       else if (e.key === 'Escape') { e.preventDefault(); this.barDirty = false; this.bar.blur(); this._focusKb(); this._updateBar(); }
     });
-    on(this.bar, 'blur', () => {
+    on(this.bar, 'blur', (e) => {
       if (this.xdraft || this._held || (this._touch && this._touch.point === this.bar)) return;      // v37: la fórmula sigue abierta
+      if (this._keepFor(e.relatedTarget)) return;            // v38
       this._commitBar(); this.barEditing = false; this._updateBar(); if (!this.edit) this._paintRefs('');
     });
     on(this.nameBox, 'keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); this.goTo(this.nameBox.value); this._focusKb(); } else if (e.key === 'Escape') { this._updateName(); this._focusKb(); } });
@@ -163,15 +181,29 @@ export class SheetGrid {
     if (this.edit && this.ed.style.display !== 'none') { text = this.ed.value; r = this.edit.r; c = this.edit.c; }
     else if (this.barEditing && this.barDirty) { const m = this.sh.mergeAt(this.anchor.r, this.anchor.c); r = m ? m.r0 : this.anchor.r; c = m ? m.c0 : this.anchor.c; text = this.bar.value; }
     if (!text || !'=+-'.includes(text[0])) return null;
+    // v38: solo una fórmula de verdad (o un «+»/«−» recién escrito); «-50», «+12,5» o un teléfono «+593…» son datos y se guardan como siempre
+    if (text[0] !== '=' && !/^[+-]\s*$/.test(text)) { const p = parseInput(text, EMPTY); if (!(typeof p.raw === 'string' && p.raw[0] === '=')) return null; }
     return { sid: this.sid, r, c, text, name: this.sh.name };
   }
-  /** Justo antes de que la lista de hojas tome el foco: la fórmula a medias no se guarda al perderlo. */
-  holdDraft() { this._held = this.xdraft ? null : this._draftNow(); return this._held; }
+  /** v38: el foco pasa a `t`: si es la lista de hojas (opts.keepDraftFor) y hay una fórmula a medias, se retiene en vez de guardarla. */
+  _keepFor(t) {
+    if (!t || this.xdraft || !this.opts.keepDraftFor || !this.opts.keepDraftFor(t)) return false;
+    const d = this._draftNow(); if (!d) return false;
+    this._held = d; return true;
+  }
   /** No se cambió de hoja: se sigue escribiendo donde estaba. */
-  releaseDraft() {
-    const d = this._held; this._held = null; if (!d) return;
-    const el = this.edit ? this.ed : this.bar;
-    try { el.focus({ preventScroll: true }); const n = el.value.length; el.setSelectionRange(n, n); } catch (e) { /* */ }
+  /** v38: la lista se cerró SIN cambiar de hoja. `to` = adónde va el foco. Si vuelve al mismo campo de la fórmula, se sigue escribiendo
+   *  (la barra conserva su «modificada»); si va a cualquier otro lado (una celda, un botón, nada), la fórmula se guarda en SU celda,
+   *  como al salir de una celda en edición. Nunca queda pendiente sobre otra celda. */
+  releaseDraft(to) {
+    const d = this._held; this._held = null; if (!d || !this.sh) return;
+    const el = this.edit ? this.ed : (this.barEditing && this.barDirty ? this.bar : null);
+    if (!el) return;
+    if (to === el) { if (el === this.bar) this._barResume = true; return; }      // el foco ya vuelve a la fórmula
+    if (this.edit) { this._commitEdit(null); return; }
+    this.barEditing = false; this.barDirty = false;
+    this._applyText(d.r, d.c, d.text);
+    this._updateBar(); this._paintRefs('');
   }
   /** La fórmula siguió en otra hoja: aquí no se guarda nada. */
   dropPending() { this._held = null; if (this.edit) { this.edit = null; this.ed.style.display = 'none'; } this.barDirty = false; }
@@ -504,7 +536,7 @@ export class SheetGrid {
     let el = null;
     if (this.xdraft) el = this.bar;                          // v37: fórmula que viene de otra hoja
     else if (this.edit && this.ed.style.display !== 'none') el = this.ed;
-    else if (this.barEditing && document.activeElement === this.bar && !this.opts.readOnly) el = this.bar;
+    else if (this.barEditing && (document.activeElement === this.bar || (this._held && this.barDirty)) && !this.opts.readOnly) el = this.bar;   // v38: también con la fórmula retenida por la lista
     if (!el) return null;
     const v = el.value, a = el.selectionStart, b = el.selectionEnd;
     if (!v || !'=+-'.includes(v[0]) || a == null) return null;
@@ -665,6 +697,16 @@ export class SheetGrid {
    *  Google Sheets en el celular), así se ve la suma del rango; para copiar en el celular está «Rellenar ↓». */
   _onHandleDown(e) {
     e.preventDefault(); e.stopPropagation();
+    // v38: escribiendo una fórmula, el cuadrito de la esquina (con el dedo cubre ~48 px) es parte de la celda de abajo/derecha:
+    // el toque o clic la agrega a la fórmula en vez de guardarla a medias. Con una fórmula de otra hoja no se rellena nada.
+    const pf = this._pointField();
+    if (pf) {
+      const cell = this._cellAt(e);
+      if (e.pointerType === 'mouse') { this._pointInsert(pf, cell.r, cell.c); this.drag = { type: 'point', el: pf, from: { r: cell.r, c: cell.c } }; }
+      else this._touch = { x: e.clientX, y: e.clientY, t: Date.now(), cell, sx: this.scroll.scrollLeft, sy: this.scroll.scrollTop, point: pf };
+      return;
+    }
+    if (this.xdraft) return;
     if (this.edit) this._commitEdit(null);
     if (e.pointerType === 'mouse' && !this.opts.readOnly) { this.drag = { type: 'fill', src: this._rect(), target: null }; return; }
     this._focusKb();

@@ -14,6 +14,10 @@ import { cellKey as K, colLetter, addrToA1, a1ToAddr, sheetRef } from './engine.
 import { fmtCell, styleCss, editText, parseInput, isDateFormat } from './format.js';
 import { toSpanish } from './formula-es.js';
 
+/* v40: lo copiado dentro de la app vive aquí, no en cada cuadrícula: al cambiar de hoja y pegar se pegan las FÓRMULAS (como Excel), no valores fijos. */
+let CLIP = null;
+const clipNorm = (t) => String(t == null ? '' : t).replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+
 /** ¿Pantalla táctil como puntero principal (celular, tableta)? Ahí el asa de la esquina selecciona en vez de rellenar. */
 const COARSE = () => { try { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); } catch (e) { return false; } };
 
@@ -21,6 +25,16 @@ const COARSE = () => { try { return !!(window.matchMedia && window.matchMedia('(
 const REF_COLORS = ['#1c7ed6', '#e8590c', '#7048e8', '#2f9e44', '#d6336c', '#0c8599', '#f59f00', '#5c940d'];
 /** Referencias de una fórmula que apuntan a ESTA hoja: [{ text, r0, c0, r1, c1 }]. Ignora textos entre comillas, nombres de
  *  función (LOG10( …) y referencias a otras hojas ('Otra hoja'!A1). */
+/** v40: la misma fórmula `dr` filas más abajo: solo cambian las filas relativas (respeta $, textos entre comillas, nombres de hoja y de función). */
+export function shiftRows(f, dr) {
+  return String(f).replace(/("(?:[^"]|"")*")|('(?:[^']|'')*')|(\$?[A-Za-z]{1,3})(\$?)(\d{1,7})(?![\w(!.])/g, (m, str, q, col, abs, row, off, all) => {
+    if (str || q) return m;
+    const prev = off > 0 ? all[off - 1] : '';
+    if (/[A-Za-z0-9_.$]/.test(prev) || abs) return m;
+    const n = Number(row) + dr;
+    return n >= 1 ? col + n : m;
+  });
+}
 export function formulaRefs(text, sheetName) {
   if (!text || !'=+-'.includes(text[0])) return [];
   const t = text.replace(/"(?:[^"]|"")*"?/g, (m) => ' '.repeat(m.length));
@@ -49,7 +63,7 @@ export class SheetGrid {
     this.sid = null; this.sh = null; this.zoom = 1;
     this.nodes = new Map();
     this.anchor = { r: 0, c: 0 }; this.focus = { r: 0, c: 0 };
-    this.edit = null; this.clip = null; this.barEditing = false; this.drag = null;
+    this.edit = null; this.barEditing = false; this.drag = null;
     this._raf = 0; this._listeners = [];
     this._mctx = document.createElement('canvas').getContext('2d');
     this._build();
@@ -248,7 +262,7 @@ export class SheetGrid {
     this.nodes.forEach(n => n.remove()); this.nodes.clear();
     this.root.classList.toggle('fxg-nogrid', this.sh.gridlines === false);
     this._layout();
-    this.anchor = { r: 0, c: 0 }; this.focus = { r: 0, c: 0 }; this.clip = null; this.clipEl.style.display = 'none';
+    this.anchor = { r: 0, c: 0 }; this.focus = { r: 0, c: 0 }; this.clipEl.style.display = 'none';
     this.scroll.scrollLeft = 0; this.scroll.scrollTop = 0;
     if (o.end) this.goEnd(); else if (o.r != null) this.select(o.r, o.c || 0, null, null, true);
     else this._afterSelect(true);
@@ -779,7 +793,7 @@ export class SheetGrid {
     const arrows = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
     if (arrows[k]) { e.preventDefault(); this._move(arrows[k][0], arrows[k][1], shift, ctrl); return; }
     if (k === 'Tab') { e.preventDefault(); this._move(0, shift ? -1 : 1); return; }
-    if (k === 'Enter') { e.preventDefault(); if (this.opts.readOnly) { this._move(shift ? -1 : 1, 0); } else this._beginEdit('edit', null); return; }
+    if (k === 'Enter') { e.preventDefault(); this._move(shift ? -1 : 1, 0); return; }      // v40: Enter baja (Mayús+Enter sube), como en Excel; se edita con F2, doble clic o escribiendo
     if (k === 'F2') { e.preventDefault(); this._beginEdit('edit', null); return; }
     if (k === 'Home') { e.preventDefault(); if (ctrl) this.select(0, 0); else this._move(0, -9999, shift); return; }
     if (k === 'End') { e.preventDefault(); if (ctrl) { const r = Math.max(0, this.eng.lastRowWithContent(this.sid)); this.select(r, 0); } else this._move(0, 9999, shift); return; }
@@ -872,11 +886,20 @@ export class SheetGrid {
     const sid = this.sid, sh = this.sh, eng = this.eng;
     const stId = sh.styleAt(r, c), st = eng.styles[stId] || EMPTY;
     let { raw, nf } = parseInput(text, st);
-    if (typeof raw === 'number' && sh.textCells.has(K(r, c)) && /^\d+$/.test(text.trim())) raw = text.trim();   // números de cuenta con ceros a la izquierda siguen siendo texto
+    // v40: solo siguen como texto los números con ceros a la izquierda (cuentas) o en celdas con formato Texto; un monto tecleado sobre un texto queda NÚMERO (antes no sumaba)
+    if (typeof raw === 'number' && /^\d+$/.test(text.trim()) && (st.nf === '@' || (/^0\d/.test(text.trim()) && sh.textCells.has(K(r, c))))) raw = text.trim();
+    // v40: en una celda con formato %, «4.25» es 4,25 % (entrada automática de porcentajes de Excel); antes quedaba 425 %
+    if (typeof raw === 'number' && Math.abs(raw) >= 1 && st.nf && /%/.test(st.nf) && !/%/.test(text)) raw = raw / 100;
     const cur = eng.raw(sid, r, c);
     if (raw === cur && !(typeof raw === 'string' && raw[0] === '=' && sh.textCells.has(K(r, c)))) return;
     let changes;
-    try { changes = eng.set(sid, r, c, raw); } catch (err) { this._toast('No se pudo guardar: ' + err.message); return; }
+    const ext = (raw !== null && !(typeof raw === 'string' && raw[0] === '=') && !this.xdraft) ? this._planExtend(r, c) : [];
+    try {
+      if (ext.length) {      // v40: valor + fórmulas de la fila en un solo paso (un solo Deshacer)
+        changes = eng._changes(eng.hf.batch(() => { eng.set(sid, r, c, raw); for (const x of ext) eng.set(sid, r, x.c, x.f); }));
+        for (const x of ext) sh.setStyle(r, x.c, sh.styleAt(r - 1, x.c));
+      } else changes = eng.set(sid, r, c, raw);
+    } catch (err) { this._toast('No se pudo guardar: ' + err.message); return; }
     const useNf = (!st.nf || st.nf === 'General') ? this._inferNf(r, c, raw, nf, text) : null;
     if (useNf) sh.setStyle(r, c, eng.deriveStyle(stId, { nf: useNf }));
     this._afterChange(changes);
@@ -915,6 +938,26 @@ export class SheetGrid {
     this._paint(true); this._paintSel(); this._updateBar(); this._updateStatus();
     this.opts.onChange({ sid: this.sid, changes });
   }
+  /**
+   * v40: como Excel («Extender formatos y fórmulas de rangos de datos»). Al escribir un dato en la fila r, cada columna vacía de esa fila
+   * recibe la fórmula de la fila de arriba si esa fórmula se repite (misma forma, desplazada) en al menos 3 de las 5 filas anteriores.
+   * Así el saldo o el acumulado sigue solo cuando se acaban las filas preparadas. La fila de arriba debe ser una fila con datos.
+   */
+  _planExtend(r, c) {
+    const eng = this.eng, sid = this.sid, sh = this.sh, out = [];
+    if (r < 3 || this.opts.readOnly) return out;
+    let hasData = false;
+    for (let k = 0; k < sh.cols && !hasData; k++) { const x = eng.raw(sid, r - 1, k); if (x !== null && x !== '' && !(typeof x === 'string' && x[0] === '=' && !sh.textCells.has(K(r - 1, k)))) hasData = true; }
+    if (!hasData) return out;
+    for (let c2 = 0; c2 < sh.cols; c2++) {
+      if (c2 === c || eng.raw(sid, r, c2) !== null || sh.mergeAt(r, c2)) continue;
+      if (!eng.isFormula(sid, r - 1, c2)) continue;
+      const top = eng.raw(sid, r - 1, c2); let n = 1;
+      for (let k = r - 2; k >= Math.max(0, r - 5); k--) if (eng.isFormula(sid, k, c2) && shiftRows(eng.raw(sid, k, c2), r - 1 - k) === top) n++;
+      if (n >= 3) out.push({ c: c2, f: shiftRows(top, 1) });
+    }
+    return out;
+  }
   _clearSel() {
     if (this.opts.readOnly) return;
     const R = this._rect();
@@ -924,6 +967,7 @@ export class SheetGrid {
   _undo() {
     if (this.opts.readOnly) return;
     const h = this._hist && this._hist.length ? this._hist.pop() : null;
+    if (!h) { this._toast('Nada que deshacer en esta hoja'); return; }      // v40: sin historial propio NO se deshace lo último hecho en otra hoja o en Anotar
     if (h && h.fmt) { for (const [r, c, s] of h.fmt) this.sh.setStyle(r, c, s); this._afterFormat(); return; }   // el último cambio fue de formato
     const n = h && h.hf && h.steps > 1 ? h.steps : 1;
     let all = null;
@@ -934,7 +978,8 @@ export class SheetGrid {
   }
   _redo() {
     if (this.opts.readOnly) return;
-    const n = this._redoN && this._redoN.length ? this._redoN.pop() : 1;
+    if (!(this._redoN && this._redoN.length)) { this._toast('Nada que rehacer en esta hoja'); return; }   // v40
+    const n = this._redoN.pop();
     let all = null;
     for (let i = 0; i < n; i++) { const ch = this.eng.redo(); if (ch === null) break; all = (all || []).concat(ch); }
     if (all === null) { this._toast('Nada que rehacer'); return; }
@@ -1126,6 +1171,8 @@ export class SheetGrid {
     }
     return lines.join('\n');
   }
+  get clip() { return CLIP && CLIP.eng === this.eng ? CLIP : null; }
+  set clip(v) { CLIP = v ? { ...v, eng: this.eng } : null; }
   _setClip(cut) {
     const R = this._rect(); const text = this._selText(R);
     this.clip = { sid: this.sid, ...R, text, cut };
@@ -1153,11 +1200,26 @@ export class SheetGrid {
   _paste(text) {
     if (this.opts.readOnly || !this.sh || text == null) return;
     const R = this._rect(); let ch = [];
-    if (this.clip && text === this.clip.text) {
+    let steps = 1;
+    if (this.clip && clipNorm(text) === clipNorm(this.clip.text)) {      // v40: se compara sin los «\r» que añade Windows
       const k = this.clip, rows = k.r1 - k.r0 + 1, cols = k.c1 - k.c0 + 1;
       const tr = Math.max(1, Math.floor((R.r1 - R.r0 + 1) / rows)), tc = Math.max(1, Math.floor((R.c1 - R.c0 + 1) / cols));
-      for (let i = 0; i < tr; i++) for (let j = 0; j < tc; j++) ch = ch.concat(this.eng.copyPaste(k.sid, k.r0, k.c0, k.r1, k.c1, this.sid, R.r0 + i * rows, R.c0 + j * cols));
-      if (k.cut) { ch = ch.concat(this.eng.clear(k.sid, k.r0, k.c0, k.r1, k.c1)); this.clip = null; }
+      steps = 0;
+      for (let i = 0; i < tr; i++) for (let j = 0; j < tc; j++) { ch = ch.concat(this.eng.copyPaste(k.sid, k.r0, k.c0, k.r1, k.c1, this.sid, R.r0 + i * rows, R.c0 + j * cols)); steps++; }
+      if (k.cut) {
+        // v40: al cortar solo se vacían las celdas de origen que NO quedaron dentro de lo pegado (mover un bloque una fila abajo ya no borra nada)
+        const d0r = R.r0, d0c = R.c0, d1r = R.r0 + tr * rows - 1, d1c = R.c0 + tc * cols - 1, same = k.sid === this.sid;
+        for (let r = k.r0; r <= k.r1; r++) {
+          let c = k.c0;
+          while (c <= k.c1) {
+            const inside = (cc) => same && r >= d0r && r <= d1r && cc >= d0c && cc <= d1c;
+            if (inside(c)) { c++; continue; }
+            let e = c; while (e + 1 <= k.c1 && !inside(e + 1)) e++;
+            ch = ch.concat(this.eng.clear(k.sid, r, c, r, e)); steps++; c = e + 1;
+          }
+        }
+        this.clip = null;
+      }
       this.anchor = { r: R.r0, c: R.c0 }; this.focus = { r: R.r0 + tr * rows - 1, c: R.c0 + tc * cols - 1 };
     } else {
       const lines = text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n');
@@ -1179,7 +1241,7 @@ export class SheetGrid {
       for (const [r, c, nf] of styleFix) this.sh.setStyle(r, c, this.eng.deriveStyle(this.sh.styleAt(r, c), { nf }));
       this.anchor = { r: R.r0, c: R.c0 }; this.focus = { r: R.r0 + matrix.length - 1, c: R.c0 + width - 1 };
     }
-    this._afterChange(ch); this._afterSelect(false);
+    this._afterChange(ch, { steps: Math.max(1, steps) }); this._afterSelect(false);
   }
 
   /* ------------------------------------------------------------------ varios */

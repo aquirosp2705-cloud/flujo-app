@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '39';
+const VERSION = '40';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -296,7 +296,7 @@ async function startWithBundle(bundle) {
   window.addEventListener('offline', () => { state.online = false; updatePill(); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') { autoSync(); checkPolicyAlert(); }      // la app quedó abierta y vuelve otro día: se revisan las pólizas
-    else if (document.visibilityState === 'hidden') { clearTimeout(pushTimer); autoPush(); }   // el celular se bloquea: se intenta subir lo pendiente antes de que suspenda la app
+    else if (document.visibilityState === 'hidden') { try { if (state.grid) state.grid.commitPending(); } catch (e) { /* v40 */ } clearTimeout(pushTimer); autoPush(); }   // el celular se bloquea: se intenta subir lo pendiente antes de que suspenda la app
   });
   setInterval(() => { if (document.visibilityState === 'visible') { autoSync(); checkPolicyAlert(); } }, 5 * 60 * 1000);   // la ventana puede quedar visible de un día a otro
   window.addEventListener('focus', () => checkPolicyAlert());
@@ -743,6 +743,8 @@ async function openGridIn(host, sidOrName, q) {
     host.innerHTML = '';
     if (!host.isConnected) return null;                    // v38: mientras cargaba ya se fue a otra pantalla: no se arma nada (ni se toca state.grid)
   }
+  // v40: una hoja de banco siempre conserva filas con la fórmula del saldo bajo el último movimiento, y el tablero lee una fila vigente
+  try { const LM = state.mods.ledger, def = LM && LM.LEDGERS && LM.keepRoom ? Object.values(LM.LEDGERS).find((d) => d.sid === sh.id) : null; if (def && LM.keepRoom(eng, def.id)) ctx.changed([sh.id, 's01'], 'ledger'); } catch (e) { console.warn('[hoja] no se pudo preparar la plantilla de saldo', e); }
   const wrap = el('div', { class: 'screen flush' });
   const select = el('select', { 'aria-label': 'Cambiar de hoja' });
   for (const s of eng.sheets) { const hid = catalog.isHiddenSheet(s); if (hid && s.id !== sh.id && !state.showHidden) continue; select.append(el('option', { value: s.id, text: catalog.infoFor(s).short + (hid ? ' (oculta)' : ''), selected: s.id === sh.id })); }

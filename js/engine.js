@@ -430,8 +430,10 @@ export class Engine {
     for (let i = 0; i <= r1 - r0; i++) for (let j = 0; j <= c1 - c0; j++) b.setStyle(dr + i, dc + j, a.styleAt(r0 + i, c0 + j));
     return this._changes(ch);
   }
-  undo() { if (!this.hf.isThereSomethingToUndo()) return null; return this._changes(this.hf.undo()); }
-  redo() { if (!this.hf.isThereSomethingToRedo()) return null; return this._changes(this.hf.redo()); }
+  undo() { if (!this.hf.isThereSomethingToUndo()) return null; return this._markDirty(this._changes(this.hf.undo())); }
+  redo() { if (!this.hf.isThereSomethingToRedo()) return null; return this._markDirty(this._changes(this.hf.redo())); }
+  /** v40: lo que deshace o rehace el motor queda marcado para guardar en SU hoja (antes solo se guardaba la hoja abierta). */
+  _markDirty(ch) { for (const x of ch) this.dirty.add(x.sid); return ch; }
   /** Recalcula funciones volátiles (HOY()) */
   refreshVolatile() { this.hf.rebuildAndRecalculate(); }
 

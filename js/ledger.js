@@ -2,7 +2,7 @@
  *
  * Dos capas en un solo archivo (sin dependencias externas):
  *   1) Capa de datos (sin DOM): LEDGERS, getLedger, ledgerInfo, listMovements, suggestDescriptions, addMovement,
- *      updateMovement, removeLastMovement, parsePastedMovements, analyzeImport, importMovements, extendTemplate.
+ *      updateMovement, removeLastMovement, parsePastedMovements, analyzeImport, importMovements, extendTemplate, keepRoom (v39).
  *   2) Pantalla: mount(host, ctx, { ledgerId }).
  *
  * Modelo: un "libro mayor simple" es una hoja con una fila por movimiento y una columna de saldo corrido cuya
@@ -68,8 +68,9 @@ function mkDate(y, m, d) {
 const yy = (s) => { let y = +s; if (y < 100) y += 2000; return y; };
 
 /** Fecha tolerante -> número de serie (o null). Solo para mostrar o leer textos pegados; nunca modifica celdas.
- *  Acepta dd/mm/aaaa, aaaa-mm-dd, dd-mm-aa, "13 nov 2026", "nov 13 2026", "nov132026", "nov1326". */
-export function parseLooseDate(text) {
+ *  Acepta dd/mm/aaaa, aaaa-mm-dd, dd-mm-aa, "13 nov 2026", "nov 13 2026", "nov132026", "nov1326".
+ *  v39: también mes y año sin día ("nov26", "nov-26", "nov 2026", "nov2026") = día 1 de ese mes; `opts.monthYear: false` no los acepta. */
+export function parseLooseDate(text, opts = {}) {
   if (text === null || text === undefined) return null;
   const t = String(text).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   if (!t || !/\d/.test(t)) return null;
@@ -83,6 +84,12 @@ export function parseLooseDate(text) {
   if ((m = /^(\d{1,2})[\s.\/\-]+(?:de\s+)?([a-z]{3,10})\.?[\s.,\/\-]+(?:de\s+)?(\d{4}|\d{2})$/.exec(t)) && monthNo(m[2])) return mkDate(yy(m[3]), monthNo(m[2]), +m[1]);
   if ((m = /^(\d{1,2})([a-z]{3,10})(\d{4}|\d{2})$/.exec(t)) && monthNo(m[2])) return mkDate(yy(m[3]), monthNo(m[2]), +m[1]);
   if ((m = /^([a-z]{3,10})\.?[\s.\/\-]+(\d{1,2})[\s.,\/\-]+(\d{4}|\d{2})$/.exec(t)) && monthNo(m[1])) return mkDate(yy(m[3]), monthNo(m[1]), +m[2]);
+  // v39: mes y año sin día = día 1. Un año de 4 dígitos solo vale entre 1900 y 2099 (y tiene que ser una fecha razonable): «nov1826» y
+  // «nov1926» siguen siendo el 18 y el 19 de noviembre de 2026 por la regla compacta de abajo.
+  if (opts.monthYear !== false && (m = /^([a-z]{3,10})\.?[\s.\/\-]*(?:de\s+)?(\d{4}|\d{2})$/.exec(t)) && monthNo(m[1])) {
+    const y = m[2].length === 2 ? 2000 + +m[2] : +m[2];
+    if (y >= 1900 && y <= 2099) { const s = mkDate(y, monthNo(m[1]), 1); if (s !== null) return s; }
+  }
   if ((m = /^([a-z]{3,10})(\d{4,6})$/.exec(t)) && monthNo(m[1])) {           // compacto: nov132026, nov1326, nov12015
     const g = m[2];
     if (g.length === 6) return mkDate(+g.slice(2), monthNo(m[1]), +g.slice(0, 2));
@@ -264,6 +271,19 @@ function scan(engine, L) {
   const end = templateEndFrom(engine, L, sh, nextRow);
   return { sh, lastRow, nextRow, templateEnd: end, templateLeft: Math.max(0, end - nextRow + 1) };
 }
+/* v39: filas anotadas SIN fórmula de saldo. Si la plantilla se acabó y se siguió escribiendo en la hoja, esas filas quedaron sin su fórmula:
+ * el saldo no las cuenta y, si la plantilla se retomara debajo de ellas, la cadena partiría de una celda vacía (el saldo volvería a cero). */
+const GAP_MAX = 2000;           // filas sin saldo que se revisan hacia arriba, como máximo
+/** Última fila con saldo sobre la fila libre: el final de la plantilla o, si justo encima de la fila libre quedaron filas sin fórmula de
+ *  saldo, la última fila que sí la tiene (desde ahí hay que rellenar). Si no se puede saber con seguridad, el final de la plantilla. */
+function chainBase(engine, L, st) {
+  const sh = st.sh, bc = L.cols.balance, r = st.nextRow;
+  if (st.templateEnd >= r || st.lastRow < L.firstDataRow) return st.templateEnd;
+  let k = r - 1;
+  while (k >= L.firstDataRow && r - k <= GAP_MAX && cellEmpty(engine, sh, k, bc)) k--;
+  if (k === r - 1 || k < L.firstDataRow || r - k > GAP_MAX) return st.templateEnd;
+  return isChainFormula(engine, L, sh, k) ? k : st.templateEnd;
+}
 
 function dateLabelOf(engine, L, r, serial) {
   try {
@@ -336,11 +356,20 @@ const movePointerRaw = (L, raw, newRow) => raw.replace(pointerRe(L), (m, a, b) =
 
 /* ===================================================================== 4. información, lista y sugerencias */
 
+/** v39: fecha de una celda de la columna de fecha: el número de serie, o la fecha de un texto que se entiende («nov26», «nov-26»,
+ *  «nov 2026», «nov1826», «jul 232026»); null si no es una fecha. Así un movimiento con la fecha escrita como texto también cuenta en su mes. */
+function cellDate(v) {
+  if (typeof v === 'number') return v;
+  if (typeof v !== 'string' || !v.trim()) return null;
+  const g = parseLooseDate(v);
+  return g !== null ? g : parseLooseDate(v.replace(/\s+/g, ''));
+}
+
 function monthChange(engine, L, lastRow, today) {
   const start = monthStart(today), end = monthEnd(today);
   let amount = 0, inflow = 0, outflow = 0, count = 0;
   for (let r = lastRow, n = 0; r >= L.firstDataRow && n < 600; r--, n++) {
-    const d = engine.value(L.sid, r, L.cols.date);
+    const d = cellDate(engine.value(L.sid, r, L.cols.date));       // v39: también las fechas escritas como texto
     if (typeof d !== 'number' || d < start || d > end) continue;
     const net = netAt(engine, L, r);
     if (net === 0) continue;
@@ -361,6 +390,7 @@ export function ledgerInfo(engine, id, opts = {}) {
   for (let r = st.lastRow, n = 0; r >= L.firstDataRow && n < 80; r--, n++) {
     const v = engine.value(sid, r, L.cols.date);
     if (isPlausibleSerial(v)) { lastDate = Math.floor(v); lastDateLabel = dateLabelOf(engine, L, r, v); break; }
+    if (typeof v === 'string') { const g = cellDate(v); if (g !== null) { lastDate = g; lastDateLabel = v.trim(); break; } }   // v39: fecha escrita como texto: se muestra tal como se anotó
   }
   const warnings = [];
   const h = engine.value(sid, L.header.r, L.header.c);
@@ -369,10 +399,16 @@ export function ledgerInfo(engine, id, opts = {}) {
     const rp = readPointer(engine, L, p);
     const stale = rp.row === null ? null : rp.row < st.lastRow;
     if (rp.row === null) warnings.push('La celda ' + a1(p.r, p.c) + ' ya no apunta al saldo: el tablero podría no ver el saldo actual.');
-    else if (stale) warnings.push('La celda ' + a1(p.r, p.c) + ' apunta a la fila ' + (rp.row + 1) + ', antes del último movimiento. Se corrige al guardar el próximo movimiento.');
+    else if (stale) warnings.push('La celda ' + a1(p.r, p.c) + ' apunta a la fila ' + (rp.row + 1) + ', antes del último movimiento. Se corrige sola al abrir la hoja para anotar o al guardar el próximo movimiento.');   // v39: abrir la hoja también la corrige (keepRoom)
     const consumers = p.consumers.map((cn) => { const v = engine.value(cn.sid, cn.r, cn.c); return { sid: cn.sid, label: cn.label, a1: a1(cn.r, cn.c), value: typeof v === 'number' ? v : null }; });
     return { a1: a1(p.r, p.c), r: p.r, c: p.c, formula: rp.raw, row: rp.row, rowNumber: rp.row === null ? null : rp.row + 1, value: rp.value, stale, consumers };
   });
+  // v39: el último movimiento no tiene la fórmula del saldo (se anotó cuando las filas preparadas se habían acabado): se avisa y se dice qué pasa
+  if (st.lastRow >= L.firstDataRow && st.templateEnd < st.nextRow && cellEmpty(engine, st.sh, st.lastRow, bc)) {
+    const base = chainBase(engine, L, st);
+    if (base !== st.templateEnd) warnings.push((st.lastRow - base === 1 ? 'La fila ' + (st.lastRow + 1) + ' está anotada' : 'Las filas ' + (base + 2) + ' a ' + (st.lastRow + 1) + ' están anotadas') + ' sin la fórmula del saldo: el saldo todavía no ' + (st.lastRow - base === 1 ? 'la' : 'las') + ' cuenta. Se corrige sola al abrir la hoja para anotar o al guardar el próximo movimiento.');
+    else warnings.push('La fila ' + (st.lastRow + 1) + ' (el último movimiento) no tiene la fórmula del saldo: el saldo no la cuenta. Abre la hoja y copia la fórmula del saldo desde la última fila que la tiene.');
+  }
   return {
     id: L.id, title: L.title, short: L.short, sid, sheetName: L.sheet,
     balance, balanceRow: balRow,
@@ -522,6 +558,72 @@ export function extendTemplate(engine, id, { rows = null } = {}) {
   runBatch(engine, (w) => { w.setMatrix(L.sid, ext.from, L.cols.balance, ext.formulas); });
   for (let r = ext.from; r <= ext.to; r++) copyRowStyles(sh, st.templateEnd, r, L.cols.balance, (rr, c, id2) => { if (sh.styleAt(rr, c) !== id2) sh.setStyle(rr, c, id2); });
   return { from: ext.from, to: ext.to, count: ext.count, clamped: ext.clamped };
+}
+
+/** v39: pone la fórmula de saldo en las filas anotadas sin ella (ver chainBase) para que la cadena del saldo no se corte antes de agregar
+ *  un movimiento debajo. No toca nada más. Devuelve cuántas filas arregló. */
+function healChain(engine, L, st) {
+  const base = chainBase(engine, L, st);
+  if (base === st.templateEnd) return 0;
+  const sh = st.sh, bc = L.cols.balance, from = base + 1, n = st.nextRow - from;
+  const formulas = [];
+  for (let i = 0; i < n; i++) formulas.push([tplFormula(L, from + i)]);
+  runBatch(engine, (w) => { w.setMatrix(L.sid, from, bc, formulas); });
+  const balSt = sh.styleAt(base, bc);
+  for (let rr = from; rr < st.nextRow; rr++) if (sh.styleAt(rr, bc) !== balSt) sh.setStyle(rr, bc, balSt);
+  return n;
+}
+
+/** v39: deja la hoja lista para anotar directo en la cuadrícula (app.js la llama al abrir la hoja), con la MISMA regla que usa addAt al
+ *  guardar desde el formulario, pero sin escribir ningún movimiento:
+ *   - los punteros (las celdas de cabecera que lee el tablero) que quedan a menos de POINTER_MARGIN filas de la fila libre se mueven
+ *     conservando su distancia al final de la plantilla; también el que apunta más allá de la plantilla (leería una celda vacía);
+ *   - si quedan menos filas con la fórmula de saldo que las necesarias (o ninguna), la plantilla se extiende con sus formatos;
+ *   - si justo encima de la fila libre hay filas anotadas sin la fórmula de saldo, la reciben (la cadena sigue desde la última que la tiene).
+ *  Todo en una sola operación. No registra nada en el diario de «deshacer» de Movimientos.
+ *  -> null si no hizo falta nada | {changes, extended:{from,to,count,clamped}|null, pointers:[{a1,from,to,before,after}]} */
+export function keepRoom(engine, id) {
+  const L = need(id);
+  const st = scan(engine, L);
+  const sh = st.sh, sid = L.sid, bc = L.cols.balance, r = st.nextRow;
+  const base = chainBase(engine, L, st);
+  // el último movimiento no tiene saldo y no se sabe desde dónde seguir la cadena: no se inventa una plantilla que partiría de cero
+  if (base === st.templateEnd && st.templateEnd < r && st.lastRow >= L.firstDataRow && cellEmpty(engine, sh, st.lastRow, bc)) return null;
+  const ptrs = L.pointers.map((p) => ({ p, ...readPointer(engine, L, p) }));
+  const movers = ptrs.filter((x) => x.row !== null && (x.row - r < POINTER_MARGIN || x.row > st.templateEnd));
+  const maxOff = movers.reduce((m, x) => Math.max(m, x.p.offset || 0), 0);
+  const neededFree = Math.max(L.templateMinFree, movers.length ? maxOff + POINTER_MARGIN : 0);
+  let ext = null;
+  if (st.templateEnd - r < neededFree || st.templateEnd < r) {
+    ext = planExtension(engine, L, sh, base, Math.max(L.extendBy, neededFree - (st.templateEnd - r) + 10) + (st.templateEnd - base));
+    if (st.templateEnd < r && (!ext || ext.to < r)) return null;        // hay celdas ocupadas debajo: no se puede preparar la fila libre (addAt lo avisa al guardar)
+  }
+  const newEnd = ext ? ext.to : st.templateEnd;
+  const pmoves = [];
+  for (const x of movers) {
+    const target = Math.max(r, newEnd - (x.p.offset || 0));
+    if (target === x.row) continue;
+    const next = movePointerRaw(L, x.raw, target);
+    if (next !== x.raw) pmoves.push({ r: x.p.r, c: x.p.c, before: x.raw, after: next, from: x.row, to: target });
+  }
+  if (!ext && !pmoves.length) return null;
+  const changes = runBatch(engine, (w) => {
+    if (ext) w.setMatrix(sid, ext.from, bc, ext.formulas);
+    for (const m of pmoves) w.set(sid, m.r, m.c, m.after);
+  });
+  if (ext) {
+    const setSt = (rr, c, id2) => { if (sh.styleAt(rr, c) !== id2) sh.setStyle(rr, c, id2); };
+    const balSt = sh.styleAt(base, bc);
+    for (let rr = ext.from; rr <= ext.to; rr++) {
+      if (rr >= r) copyRowStyles(sh, st.templateEnd, rr, bc, setSt);      // filas nuevas de plantilla: formatos como en extendTemplate
+      if (base !== st.templateEnd) setSt(rr, bc, balSt);                   // había filas sin saldo: el formato del saldo es el de la última que lo tenía
+    }
+  }
+  return {
+    changes,
+    extended: ext ? { from: ext.from, to: ext.to, count: ext.count, clamped: ext.clamped } : null,
+    pointers: pmoves.map((m) => ({ a1: a1(m.r, m.c), from: m.from, to: m.to, before: m.before, after: m.after })),
+  };
 }
 
 /* ---- estilos ---- */
@@ -680,7 +782,9 @@ function addAt(engine, L, a, st) {
 export function addMovement(engine, id, mv) {
   const L = need(id);
   const a = normalizeMovement(L, mv);
-  return addAt(engine, L, a, scan(engine, L));
+  const st = scan(engine, L);
+  healChain(engine, L, st);            // v39: si quedaron filas anotadas sin fórmula de saldo, la reciben antes (la cadena no se corta)
+  return addAt(engine, L, a, st);
 }
 
 /** Quita el último movimiento: vacía las celdas de entrada y deja la fórmula. Si lo registró addMovement en esta
@@ -819,7 +923,9 @@ function mergeThousands(fields) {            // "1","234.50" separados por una c
   }
   return out;
 }
-const isDateField = (f) => /\d/.test(f) && parseLooseDate(f) !== null;
+/* v39: el texto del banco siempre trae la fecha completa; «NOV 2026» en una descripción o en un título no es la fecha de un movimiento */
+const fullDate = (t) => parseLooseDate(t, { monthYear: false });
+const isDateField = (f) => /\d/.test(f) && fullDate(f) !== null;
 function splitFields(line) {
   if (line.includes('\t')) return { mode: 'tab', fields: line.split('\t').map((s) => s.trim()) };
   if (line.includes(';')) return { mode: 'semi', fields: splitCsv(line, ';') };
@@ -841,7 +947,7 @@ function interpretLine(sp, header, flags) {
   const get = (i) => (i !== undefined && i !== null && i < fields.length ? fields[i] : '');
   // 1) con encabezado alineado: columnas por posición
   if (header && mode !== 'space' && fields.length === header.n && header.date !== undefined) {
-    const date = parseLooseDate(get(header.date));
+    const date = fullDate(get(header.date));
     if (date !== null) {
       let debit = 0, credit = 0, uncertain = false;
       if (header.debit !== undefined || header.credit !== undefined) {
@@ -859,11 +965,11 @@ function interpretLine(sp, header, flags) {
   }
   // 2) heurística sin encabezado
   let di = fields.findIndex(isDateField), date = null;
-  if (di >= 0) date = parseLooseDate(fields[di]);
+  if (di >= 0) date = fullDate(fields[di]);
   else {
     for (let i = 0; i < fields.length && date === null; i++) {
       const m = DATE_ANYWHERE.exec(fields[i]);
-      if (m && parseLooseDate(m[1]) !== null) { date = parseLooseDate(m[1]); fields[i] = clean(fields[i].replace(m[1], ' ')); di = i; }
+      if (m && fullDate(m[1]) !== null) { date = fullDate(m[1]); fields[i] = clean(fields[i].replace(m[1], ' ')); di = i; }
     }
   }
   if (date === null) return { error: 'sin fecha' };
@@ -993,6 +1099,7 @@ export function importMovements(engine, id, rows, { skipDuplicates = true, month
   const addedRows = [], changes = [];
   let balanceBefore = null, balanceAfter = null, error = null;
   try {
+    if (todo.length) healChain(engine, L, st);      // v39: igual que en addMovement
     for (const v of todo) {
       const a = normalizeMovement(L, { date: month ? monthStart(v.date) : v.date, desc: v.desc, number: v.number, kind: v.amount > 0 ? 'credit' : 'debit', amount: Math.abs(v.amount), dateStyle: month ? 'month' : 'exact' });
       const res = addAt(engine, L, a, st);
@@ -1105,7 +1212,7 @@ export function mount(host, ctx, { ledgerId = null, onAdd = null } = {}) {
       el('div', { class: 'kpi lg-kpi' }, el('span', { class: 'l', text: 'Saldo actual' }), el('span', { class: 'v' + (info.balance !== null && info.balance < 0 ? ' neg' : ''), text: info.balance === null ? '—' : money(info.balance) })),
       facts,
       info.warnings.map((w) => el('div', { class: 'banner lg-banner', role: 'status', text: w })),
-      info.templateRowsLeft < TEMPLATE_MIN_FREE ? el('p', { class: 'small muted lg-note', text: 'Quedan ' + info.templateRowsLeft + ' filas con saldo prellenado; al guardar se agregan más automáticamente.' }) : null,
+      info.templateRowsLeft < TEMPLATE_MIN_FREE ? el('p', { class: 'small muted lg-note', text: 'Quedan ' + info.templateRowsLeft + ' filas con saldo prellenado; al guardar un movimiento o al abrir la hoja para anotar se agregan más automáticamente.' }) : null,   // v39: abrir la hoja también las agrega
       el('div', { class: 'row lg-links' }, el('button', { type: 'button', class: 'btn ghost lg-link', onclick: () => openInSheet(info.lastRow >= 0 ? info.lastRow : info.nextRow) }, 'Ver en la hoja')),
     );
   }

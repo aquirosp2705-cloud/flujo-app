@@ -174,6 +174,22 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Correcciones de la auditoría de consistencia (v40)
+
+- **Al teclear, como Excel:** `(300)` y `$(1,234.50)` son negativos; `12.` es 12; `nov-26`, `15-nov` y `15-nov-2026` son fechas; `15/11` es fecha
+  solo en una celda con formato de fecha; año de dos dígitos 30–99 = 1930–1999; en una celda de porcentaje `4.25` es 4,25 %.
+  Un monto tecleado sobre un texto queda número. Pruebas: `test/input-test.html` (579).
+- **Fórmulas que siguen solas:** al escribir un dato bajo una lista, cada columna vacía recibe la fórmula de arriba si se repite en al menos
+  3 de las 5 filas anteriores (`grid._planExtend`); en las hojas de banco, al abrir la hoja se preparan filas con la fórmula de saldo y se
+  mueve la celda que lee el tablero (`ledger.keepRoom`).
+- **Copiar y pegar:** lo copiado vive a nivel de la app; pegar después de cambiar de hoja pega fórmulas, no valores fijos.
+  Cortar y pegar encimado mueve el bloque sin borrar nada. Un solo Deshacer revierte cada operación.
+- **Deshacer y rehacer** solo actúan sobre lo hecho en la hoja abierta; el motor marca para guardar las hojas que toca.
+- **Enter** sobre una celda baja (Mayús+Enter sube); se edita con F2, doble clic o escribiendo.
+- En el celular, lo escrito y no confirmado se guarda al pasar la app a segundo plano.
+- Movimientos cuenta también las fechas escritas como texto (`nov26`, `nov-26`).
+- Pruebas: `_e2e/hoja_e2e.py` (11).
+
 ## Tarjeta Patrimonio con los dos valores (v39)
 
 - El número grande sigue siendo el patrimonio de los cálculos, que no cuenta las reservas (pólizas marcadas «reserva» y ahorros a plazo); debajo se muestra, solo como dato, el patrimonio «Con reservas».

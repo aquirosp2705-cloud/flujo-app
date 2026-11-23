@@ -1001,9 +1001,14 @@ export function mount(host, ctx, opts = {}) {
     const pFlat = isNum(P.variation) && Math.abs(P.variation) < EPS;
     const pChip = isNum(P.variation) ? chip(P.variation, { pct: pctOf(P.variation, P.previous), versus: pFlat ? '' : prevLabel }) : null;
     const ytdPct = pctOf(P.ytd, P.base);
+    // v39: el patrimonio de los cálculos NO cuenta las reservas (pólizas «reserva» y ahorros a plazo); el «con reservas» solo se muestra aquí
+    let resv = 0;
+    try { const i0 = readInvestments(eng(), { today: s.month.today }); if (i0 && i0.ok) resv = (i0.reserve && isNum(i0.reserve.amount) ? i0.reserve.amount : 0) + (i0.savings && isNum(i0.savings.amount) ? i0.savings.amount : 0); } catch (e) { resv = 0; }
     grid.append(kpiTile({ cls: 'pat', label: 'Patrimonio', value: big(P.actual), title: isNum(P.actual) ? money(P.actual) : '', goText: 'Ver el patrimonio mes a mes',
       kids: [
         spark(D.series),
+        resv > EPS && isNum(P.actual) ? kpiLine('Sin reservas (el de los cálculos)') : null,
+        resv > EPS && isNum(P.actual) ? kpiLine('Con reservas ' + money(P.actual + resv, { dec: 0 })) : null,
         pChip ? el('span', { class: 'db-kpi-delta' }, pChip, el('span', { class: 'db-kpi-vs', text: pFlat ? 'desde el último cierre' : 'frente a ' + prevLabel })) : null,
         isNum(P.ytd) ? el('span', { class: 'db-kpi-line' }, 'En el año ', el('b', { class: P.ytd < -EPS ? 'neg' : 'pos', text: money(P.ytd, { sign: true, dec: 0 }) }),
           ytdPct !== null ? ' (' + (ytdPct > 0 ? '+' : ytdPct < 0 ? '−' : '') + Math.abs(ytdPct * 100).toFixed(1) + '%)' : '', s.month.baseLabel ? ' desde ' + s.month.baseLabel : '') : null,

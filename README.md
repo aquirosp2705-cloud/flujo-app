@@ -174,6 +174,10 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Tarjeta Patrimonio con los dos valores (v39)
+
+- El número grande sigue siendo el patrimonio de los cálculos, que no cuenta las reservas (pólizas marcadas «reserva» y ahorros a plazo); debajo se muestra, solo como dato, el patrimonio «Con reservas».
+
 ## Correcciones de las fórmulas a mano tras revisión independiente (v38)
 
 - Un dato con signo (`-50`, `+12,5`, un teléfono `+593…`) ya no se toma como fórmula: al cambiar de hoja se guarda como siempre

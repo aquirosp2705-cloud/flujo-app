@@ -174,6 +174,10 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Saldos bancarios en el Resumen (v42)
+
+- Tarjeta «Saldos bancarios» bajo «Disponible hoy»: el saldo de cada libro de banco (`ledgerInfo().balance`) y de la libreta de ahorros (`quick` → `prepare().account.balance`), tal cual está en su hoja, sin redondear y sin sumar. Incluye las cuentas que no entran en el disponible.
+
 ## Guardado al salir de la app sin conexión (v41)
 
 - Al pasar a segundo plano (`visibilitychange`, `pagehide`, `freeze`) lo escrito sin confirmar se pasa a la hoja y se guarda en el equipo de inmediato, haya o no red.

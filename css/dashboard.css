@@ -432,3 +432,19 @@ button.db-kpi:active { transform: none; }
   .db-hero { padding: 14px 16px 12px; }
   .db-hero-value, .db-hero-value.long { font-size: 1.75rem; }
 }
+
+/* v42: saldos bancarios, uno por cuenta y sin sumar, junto a «Disponible hoy» */
+.db-bal { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px 8px; }
+.db-bal h2 { font-size: 14px; margin: 0; }
+.db-bal-sub { font-size: 12px; color: var(--muted); margin: 1px 0 6px; }
+.db-bal ul { list-style: none; margin: 0; padding: 0; }
+.db-bal li { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.db-bal li .k { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-bal li .v { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.db-bal li .v.neg { color: var(--neg); }
+@container db (min-width: 740px) {
+  .db-bal { grid-area: bal; }
+  .db-top { grid-template-rows: auto auto 1fr; grid-template-areas: "hero kpis" "bal kpis" "actions kpis"; }
+  .db-top.solo { grid-template-rows: none; grid-template-areas: "hero" "bal" "actions"; }
+  .db-top > .db-bal { align-self: start; }
+}

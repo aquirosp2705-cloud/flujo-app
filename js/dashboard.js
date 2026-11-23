@@ -813,7 +813,8 @@ export function mount(host, ctx, opts = {}) {
   const secFlow = el('section', { class: 'card db-flow', 'aria-labelledby': 'db-flow-h', hidden: true });
   // v33, orden de director financiero: lo disponible y los indicadores clave; los accesos; los resultados (ingresos y egresos, patrimonio mes a mes);
   // dónde está el dinero (provisiones y bancos); las inversiones; los últimos movimientos. Móvil: en este orden; escritorio: áreas de la cuadrícula en el CSS.
-  const top = el('div', { class: 'db-top' }, secHero, secActions, secKpis);
+  const secBal = el('section', { class: 'db-bal', 'aria-labelledby': 'db-bal-h' });      // v42: saldo de cada banco, sin sumar
+  const top = el('div', { class: 'db-top' }, secHero, secBal, secActions, secKpis);
   const main = el('div', { class: 'db-main' }, secFlow, secBanks, secProv, secChart, secInvest, secRecent);
   root.append(secDate, secBanners, top, main);
 
@@ -1530,10 +1531,32 @@ export function mount(host, ctx, opts = {}) {
   const ymd = (serial) => { const d = serialToDate(serial); return String(d.getUTCDate()).padStart(2, '0') + '/' + String(d.getUTCMonth() + 1).padStart(2, '0') + '/' + d.getUTCFullYear(); };
 
   /* ---- ciclo de vida ---- */
+  /** v42: una mirada a los saldos bancarios: el saldo de cada hoja tal cual (sin redondear y SIN sumar), incluidas las cuentas que no entran en el disponible. */
+  function renderBal() {
+    secBal.replaceChildren();
+    const rows = [], L = S.ledger, Q = S.quick;
+    let today = null; try { today = ctx.today(); } catch (e) { today = null; }
+    if (L && typeof L.ledgerInfo === 'function' && L.LEDGERS) {
+      for (const d of Object.values(L.LEDGERS)) {
+        try { const i = L.ledgerInfo(eng(), d.id, { today }); if (i && isNum(i.balance)) rows.push({ label: d.chip || d.short || d.title, value: i.balance }); } catch (e) { /* esa hoja no se pudo leer */ }
+      }
+    }
+    if (Q && Q.getForm && Q.SHEETS && Q.SHEETS.produb) {
+      try {
+        const sh = eng().sheet(Q.SHEETS.produb), p = sh ? Q.getForm('produb').prepare(eng(), { today }) : null;
+        const name = sh ? String(ctx.catalog && ctx.catalog.infoFor ? ctx.catalog.infoFor(sh).short : sh.name).trim().replace(/^tarjeta\s+/i, '') : '';
+        if (p && p.account && isNum(p.account.balance)) rows.push({ label: name + ' · Ahorros', value: p.account.balance });
+      } catch (e) { /* sin esa cuenta */ }
+    }
+    secBal.hidden = !rows.length;
+    if (!rows.length) return;
+    secBal.append(el('h2', { id: 'db-bal-h', text: 'Saldos bancarios' }), el('p', { class: 'db-bal-sub', text: 'El saldo de cada cuenta en su hoja. No se suman.' }),
+      el('ul', {}, ...rows.map((r) => el('li', {}, el('span', { class: 'k', text: r.label }), el('span', { class: 'v' + (r.value < -EPS ? ' neg' : ''), text: money(r.value) })))));
+  }
   function renderAll() {
     D = snapshot();
     const ok = D.summary.ok;
-    renderDate(); renderBanners(); renderHero(); renderActions(); renderKpis();
+    renderDate(); renderBanners(); renderHero(); renderBal(); renderActions(); renderKpis();
     top.classList.toggle('solo', !ok);
     secBanks.hidden = !ok;
     renderBanks(); renderFlow(); renderInvestments(ok); renderProv();
@@ -1552,7 +1575,8 @@ export function mount(host, ctx, opts = {}) {
     console.error(e);
     root.append(el('div', { class: 'card' }, el('h2', { text: 'No se pudo mostrar el resumen' }), el('p', { class: 'muted', text: String((e && e.message) || e) })));
   }
-  if (!S.ledger && !S.noLedger) loadLedger().then((m) => { if (m && !S.destroyed) { S.ledger = m; if (D) { D = snapshot(); renderBanks(); renderRecent(); } } });
+  if (!S.ledger && !S.noLedger) loadLedger().then((m) => { if (m && !S.destroyed) { S.ledger = m; if (D) { D = snapshot(); renderBanks(); renderBal(); renderRecent(); } } });
+  if (opts.quick !== false) import('./quick.js').then((m) => { if (m && !S.destroyed) { S.quick = m; if (D) renderBal(); } }).catch(() => {});      // v42: saldo de la libreta de ahorros
   loadLastClose();                                                             // «Deshacer el último cierre» sobrevive al cierre de la app (almacén kv de IndexedDB)
   loadFlow(120);
 

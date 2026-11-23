@@ -174,6 +174,10 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Guardado al salir de la app sin conexión (v41)
+
+- Al pasar a segundo plano (`visibilitychange`, `pagehide`, `freeze`) lo escrito sin confirmar se pasa a la hoja y se guarda en el equipo de inmediato, haya o no red.
+
 ## Correcciones de la auditoría de consistencia (v40)
 
 - **Al teclear, como Excel:** `(300)` y `$(1,234.50)` son negativos; `12.` es 12; `nov-26`, `15-nov` y `15-nov-2026` son fechas; `15/11` es fecha

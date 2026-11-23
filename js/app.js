@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '40';
+const VERSION = '41';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -296,8 +296,15 @@ async function startWithBundle(bundle) {
   window.addEventListener('offline', () => { state.online = false; updatePill(); });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') { autoSync(); checkPolicyAlert(); }      // la app quedó abierta y vuelve otro día: se revisan las pólizas
-    else if (document.visibilityState === 'hidden') { try { if (state.grid) state.grid.commitPending(); } catch (e) { /* v40 */ } clearTimeout(pushTimer); autoPush(); }   // el celular se bloquea: se intenta subir lo pendiente antes de que suspenda la app
+    else if (document.visibilityState === 'hidden') { commitAndSave(); clearTimeout(pushTimer); autoPush(); }   // el celular se bloquea: se intenta subir lo pendiente antes de que suspenda la app
   });
+  // v41: lo escrito y no confirmado pasa a la hoja y se guarda EN EL EQUIPO de inmediato, haya o no conexión (antes, sin red, podía quedar solo en memoria)
+  function commitAndSave() {
+    try { if (state.grid) state.grid.commitPending(); } catch (e) { /* */ }
+    try { if (state.saver) state.saver.flush({ urgent: true }).catch(() => {}); } catch (e) { /* */ }
+  }
+  window.addEventListener('pagehide', commitAndSave);
+  window.addEventListener('freeze', commitAndSave);
   setInterval(() => { if (document.visibilityState === 'visible') { autoSync(); checkPolicyAlert(); } }, 5 * 60 * 1000);   // la ventana puede quedar visible de un día a otro
   window.addEventListener('focus', () => checkPolicyAlert());
   $('#syncPill').addEventListener('click', onPill);

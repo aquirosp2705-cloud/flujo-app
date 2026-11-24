@@ -448,3 +448,11 @@ button.db-kpi:active { transform: none; }
   .db-top.solo { grid-template-rows: none; grid-template-areas: "hero" "bal" "actions"; }
   .db-top > .db-bal { align-self: start; }
 }
+
+/* v43: cada cuenta de «Saldos bancarios» es un botón que abre su hoja */
+.db-bal li { padding: 0; }
+.db-bal-go { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; width: 100%; min-height: 40px; padding: 8px 2px; margin: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
+.db-bal-go .k { flex: 1 1 auto; }
+.db-bal-go .go { color: var(--muted); font-size: 16px; line-height: 1; }
+.db-bal-go:hover { background: var(--soft); }
+.db-bal-go:focus-visible { outline: 2px solid var(--pri); outline-offset: 1px; }

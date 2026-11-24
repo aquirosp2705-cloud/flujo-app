@@ -1538,20 +1538,21 @@ export function mount(host, ctx, opts = {}) {
     let today = null; try { today = ctx.today(); } catch (e) { today = null; }
     if (L && typeof L.ledgerInfo === 'function' && L.LEDGERS) {
       for (const d of Object.values(L.LEDGERS)) {
-        try { const i = L.ledgerInfo(eng(), d.id, { today }); if (i && isNum(i.balance)) rows.push({ label: d.chip || d.short || d.title, value: i.balance }); } catch (e) { /* esa hoja no se pudo leer */ }
+        try { const i = L.ledgerInfo(eng(), d.id, { today }); if (i && isNum(i.balance)) rows.push({ label: d.chip || d.short || d.title, value: i.balance, sid: d.sid }); } catch (e) { /* esa hoja no se pudo leer */ }
       }
     }
     if (Q && Q.getForm && Q.SHEETS && Q.SHEETS.produb) {
       try {
         const sh = eng().sheet(Q.SHEETS.produb), p = sh ? Q.getForm('produb').prepare(eng(), { today }) : null;
         const name = sh ? String(ctx.catalog && ctx.catalog.infoFor ? ctx.catalog.infoFor(sh).short : sh.name).trim().replace(/^tarjeta\s+/i, '') : '';
-        if (p && p.account && isNum(p.account.balance)) rows.push({ label: name + ' · Ahorros', value: p.account.balance });
+        if (p && p.account && isNum(p.account.balance)) rows.push({ label: name + ' · Ahorros', value: p.account.balance, sid: Q.SHEETS.produb });
       } catch (e) { /* sin esa cuenta */ }
     }
     secBal.hidden = !rows.length;
     if (!rows.length) return;
-    secBal.append(el('h2', { id: 'db-bal-h', text: 'Saldos bancarios' }), el('p', { class: 'db-bal-sub', text: 'El saldo de cada cuenta en su hoja. No se suman.' }),
-      el('ul', {}, ...rows.map((r) => el('li', {}, el('span', { class: 'k', text: r.label }), el('span', { class: 'v' + (r.value < -EPS ? ' neg' : ''), text: money(r.value) })))));
+    secBal.append(el('h2', { id: 'db-bal-h', text: 'Saldos bancarios' }), el('p', { class: 'db-bal-sub', text: 'El saldo de cada cuenta en su hoja. No se suman. Toca una cuenta para abrir su hoja.' }),
+      el('ul', {}, ...rows.map((r) => el('li', {}, el('button', { type: 'button', class: 'db-bal-go', 'aria-label': 'Abrir la hoja de ' + r.label + ', saldo ' + money(r.value), onclick: () => ctx.openSheet(r.sid, { end: true }) },      // v43: tocar la cuenta abre su hoja en el último movimiento
+        el('span', { class: 'k', text: r.label }), el('span', { class: 'v' + (r.value < -EPS ? ' neg' : ''), text: money(r.value) }), el('span', { class: 'go', 'aria-hidden': 'true', text: '›' }))))));
   }
   function renderAll() {
     D = snapshot();

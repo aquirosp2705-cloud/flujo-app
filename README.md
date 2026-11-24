@@ -176,6 +176,8 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
 
 ## Saldos bancarios en el Resumen (v42)
 
+- v43: cada cuenta de la tarjeta es un botón que abre su hoja en el último movimiento.
+
 - Tarjeta «Saldos bancarios» bajo «Disponible hoy»: el saldo de cada libro de banco (`ledgerInfo().balance`) y de la libreta de ahorros (`quick` → `prepare().account.balance`), tal cual está en su hoja, sin redondear y sin sumar. Incluye las cuentas que no entran en el disponible.
 
 ## Guardado al salir de la app sin conexión (v41)

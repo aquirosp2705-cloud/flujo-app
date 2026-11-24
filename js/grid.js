@@ -86,6 +86,7 @@ export class SheetGrid {
         <button data-act="fc" class="fxg-fmt" title="Color de letra"><span class="fxg-fc">A</span> ▾</button>
         <button data-act="bg" class="fxg-fmt" title="Color de relleno"><span class="fxg-bg"></span> ▾</button>
         <button data-act="bd" class="fxg-fmt" title="Bordes: raya abajo, raya arriba, contorno…" aria-label="Bordes" aria-haspopup="menu"><span class="fxg-bdi" aria-hidden="true"></span> ▾</button>
+        <button data-act="nf" class="fxg-fmt" title="Formato de número: $ con o sin centavos, %, fecha…" aria-label="Formato de número" aria-haspopup="menu">123 ▾</button>
         <button data-act="unfmt" class="fxg-fmt" title="Quitar negrita y colores de lo seleccionado">Sin color</button>
         <button data-act="end" title="Ir al último dato">Ir al final ⇲</button>
         <button data-act="find" title="Buscar (Ctrl+F)">Buscar</button>
@@ -283,7 +284,7 @@ export class SheetGrid {
     if (this.tools) {
       for (const b of this.tools.querySelectorAll('button[data-act]')) {
         const act = b.dataset.act;
-        b.hidden = ro && (act === 'undo' || act === 'redo' || act === 'paste' || act === 'fill' || act === 'clear' || act === 'bold' || act === 'fc' || act === 'bg' || act === 'bd' || act === 'unfmt' || (act === 'find' && !this.opts.onFind));
+        b.hidden = ro && (act === 'undo' || act === 'redo' || act === 'paste' || act === 'fill' || act === 'clear' || act === 'bold' || act === 'fc' || act === 'bg' || act === 'bd' || act === 'nf' || act === 'unfmt' || (act === 'find' && !this.opts.onFind));
       }
     }
   }
@@ -1083,6 +1084,55 @@ export class SheetGrid {
     this._pushHist({ fmt: prev });
     this._afterFormat();
   }
+  /** v44: aplica un formato de número a lo seleccionado (nf vacío = General). Solo cambia cómo se ve; el valor y las fórmulas no cambian. Se deshace con Ctrl+Z. */
+  _numFormat(nf) {
+    if (this.opts.readOnly) return;
+    const R = this._rect(), prev = [];
+    for (let r = R.r0; r <= R.r1; r++) for (let c = R.c0; c <= R.c1; c++) {
+      const s = this.sh.styleAt(r, c), ns = this.eng.deriveStyle(s, { nf: nf || undefined });
+      if (ns === s) continue;
+      prev.push([r, c, s]); this.sh.setStyle(r, c, ns);
+    }
+    if (!prev.length) return;
+    this._pushHist({ fmt: prev });
+    this._afterFormat();
+  }
+  /** v44: menú «Formato de número» junto al botón (misma forma que el de bordes). */
+  _numMenu() {
+    if (this.opts.readOnly) return;
+    if (this._pal) { const same = this._pal.dataset.kind === 'nf'; this._pal.remove(); this._pal = null; if (same) return; }
+    const items = [['$#,##0.00', 'Dólares con centavos', '$1,234.50'], ['$#,##0', 'Dólares sin centavos', '$1,235'],
+      ['#,##0.00', 'Número con decimales', '1,234.50'], ['#,##0', 'Número sin decimales', '1,235'],
+      ['0%', 'Porcentaje', '4%'], ['0.00%', 'Porcentaje con decimales', '4.25%'],
+      ['dd/mm/yyyy', 'Fecha', '15/11/2026'], ['mmm-yy', 'Mes y año', 'nov-26'], ['', 'General (sin formato)', '1234.5']];
+    const menu = document.createElement('div');
+    menu.className = 'fxg-pal fxg-bdm fxg-nfm'; menu.dataset.kind = 'nf'; menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Formato de número');
+    const close = () => { menu.remove(); if (this._pal === menu) this._pal = null; document.removeEventListener('pointerdown', away, true); };
+    for (const [nf, label, sample] of items) {
+      const b = document.createElement('button'); b.type = 'button'; b.setAttribute('role', 'menuitem'); b.dataset.nf = nf;
+      const l = document.createElement('span'); l.textContent = label; const s = document.createElement('span'); s.className = 'fxg-nfs'; s.textContent = sample;
+      b.append(l, s);
+      b.addEventListener('click', () => { close(); this._numFormat(nf); this._focusKb(); });
+      menu.append(b);
+    }
+    menu.addEventListener('keydown', (e) => {
+      const list = [...menu.querySelectorAll('button')], i = list.indexOf(document.activeElement);
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); this._focusKb(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); list[(i + 1) % list.length].focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); list[(i - 1 + list.length) % list.length].focus(); }
+    });
+    const btn = this.tools && this.tools.querySelector('button[data-act="nf"]');
+    const rc = btn ? btn.getBoundingClientRect() : { left: 10, bottom: 60 };
+    menu.style.left = Math.max(6, Math.min(rc.left, window.innerWidth - 290)) + 'px';
+    menu.style.top = Math.min(rc.bottom + 4, Math.max(6, window.innerHeight - 430)) + 'px';
+    document.body.append(menu); this._pal = menu;
+    const away = (e) => {
+      if (!menu.isConnected) { document.removeEventListener('pointerdown', away, true); return; }
+      if (!menu.contains(e.target) && !(btn && btn.contains(e.target))) close();
+    };
+    setTimeout(() => document.addEventListener('pointerdown', away, true), 0);
+    const first = menu.querySelector('button'); if (first) try { first.focus({ preventScroll: true }); } catch (e) { /* nada */ }
+  }
   /** Menú «Bordes» junto al botón (como la paleta de colores). */
   _borderMenu() {
     if (this.opts.readOnly) return;
@@ -1260,6 +1310,7 @@ export class SheetGrid {
     if (act === 'bold') return this._toggleBold();
     if (act === 'fc' || act === 'bg') return this._palette(act);
     if (act === 'bd') return this._borderMenu();
+    if (act === 'nf') return this._numMenu();
     if (act === 'unfmt') return this._format({ b: undefined, fc: undefined, bg: undefined });
   }
   _toast(msg) { if (this.opts.onToast) this.opts.onToast(msg); else { this.stL.textContent = msg; clearTimeout(this._tt); this._tt = setTimeout(() => this._updateStatus(), 2500); } }

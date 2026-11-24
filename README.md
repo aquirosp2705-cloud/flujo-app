@@ -174,6 +174,10 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Formato de número en la hoja (v44)
+
+- Botón «123 ▾» en la barra de la hoja: dólares con o sin centavos, número con o sin decimales, porcentaje, fecha, mes y año y General. Cambia solo el formato (`nf`) de lo seleccionado; se deshace con Ctrl+Z (`grid._numFormat`, `_numMenu`).
+
 ## Saldos bancarios en el Resumen (v42)
 
 - v43: cada cuenta de la tarjeta es un botón que abre su hoja en el último movimiento.

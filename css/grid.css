@@ -84,3 +84,8 @@
 .fxg-pal.fxg-bdm button, .fxg-pal.fxg-bdm button:last-child { grid-column: auto; display: flex; align-items: center; gap: 10px; width: 100%; height: auto; min-height: 40px; padding: 6px 10px; border: 0; border-radius: 7px; font-size: 14px; text-align: left; background: #fff; }
 .fxg-pal.fxg-bdm button:hover, .fxg-pal.fxg-bdm button:focus-visible { background: #eef3f4; outline: none; }
 .fxg-pal.fxg-bdm svg { flex: none; }
+
+/* v44: menú de formato de número: nombre a la izquierda y ejemplo a la derecha */
+.fxg-pal.fxg-nfm { min-width: 270px; max-height: calc(100vh - 20px); overflow-y: auto; }
+.fxg-pal.fxg-nfm button { justify-content: space-between; }
+.fxg-nfs { color: #6b7b7f; font-variant-numeric: tabular-nums; white-space: nowrap; }

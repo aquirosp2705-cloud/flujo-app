@@ -23,6 +23,7 @@
  * API pública:
  *   mount(host, ctx, opts?) -> { destroy(), refresh() }
  *   readSummary(engine, opts?)        saldos por banco, provisión, disponible, flujo, mes anterior, variaciones, controles
+ *   readAvailable(engine)             solo el disponible (v45: el menú y la barra de arriba lo leen en cada cambio)
  *   readProvisions(engine)            líneas de provisión (A8:C17) y líneas libres
  *   readNetWorthSeries(engine, opts?) patrimonio mensual de todos los años que haya (archivados + vivo) + serie continua + estadísticas
  *   findNetWorthBlocks(engine, opts?) bloques anuales descubiertos por sus fechas
@@ -184,6 +185,18 @@ export function readSummary(engine, opts = {}) {
   else if (lag !== null && lag > 1) out.warnings.push({ code: 'month', level: 'warn', text: `La hoja ${out.sheetName} sigue en ${out.month.currentLabel}, pero hoy ya es ${out.month.todayLabel}: faltan cierres. Cierra los meses en orden, uno por uno, con «Cerrar mes».` });
   else if (lag !== null && lag < 0) out.warnings.push({ code: 'month-ahead', level: 'info', text: `La hoja ${out.sheetName} ya está en ${out.month.currentLabel}, pero hoy es ${out.month.todayLabel}. Es normal si cerraste el mes antes de que terminara.` });
   return out;
+}
+
+/**
+ * v45: solo «Disponible hoy», barato de leer en cada cambio (el menú de la izquierda y la barra de arriba lo muestran mientras se anota).
+ * Es la misma cifra que readSummary().available: el total «Mes actual» de la tabla de bancos (M9 de CONSOL) o, si está vacío, D22.
+ * @returns {{ok:boolean, value:number|null}} ok=false si el libro no tiene la hoja de resumen
+ */
+export function readAvailable(engine) {
+  const R = makeReader(engine);
+  if (R.missing) return { ok: false, value: null };
+  const m9 = R.num('M9');
+  return { ok: true, value: m9 !== null ? m9 : R.num('D22') };
 }
 
 /* ================================================================== provisiones (A8:C17) */

@@ -192,3 +192,31 @@ table.t td.r, table.t th.r { text-align: right; }
 .closed { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 10px; padding: 24px; text-align: center; background: var(--bg); color: var(--ink); }
 .closed h1 { font-size: 1.5rem; color: var(--pri); }
 .closed p { max-width: 34ch; }
+
+/* ---------- v45: «Disponible» a la vista mientras se anota: menú de la izquierda (computador, iPad horizontal) y barra de arriba (celular, iPad vertical) ---------- */
+.side-disp { display: flex; flex-direction: column; gap: 1px; margin: 0 2px 10px; padding: 10px 12px 9px; border-radius: 12px; background: var(--soft); border: 1px solid var(--line); }
+.side-disp .sd-l { font-size: 11.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.side-disp .sd-v { font-size: 21px; font-weight: 750; letter-spacing: -.4px; line-height: 1.25; font-variant-numeric: tabular-nums; color: var(--ink); }
+.side-disp .sd-d { font-size: 13px; font-weight: 700; line-height: 1.3; color: var(--muted); font-variant-numeric: tabular-nums; }
+.side-disp .sd-d:empty { display: none; }
+.side-disp .sd-n { font-size: 12px; line-height: 1.3; color: var(--muted); }
+.side-disp .sd-d.pos { color: var(--pos); }
+.side-disp .sd-d.neg { color: var(--neg); }
+.side-disp.up { animation: dispUp 1.8s ease-out; }
+.side-disp.down { animation: dispDown 1.8s ease-out; }
+@keyframes dispUp { 0%, 35% { background: color-mix(in srgb, var(--pos) 20%, var(--card)); border-color: var(--pos); } 100% { background: var(--soft); border-color: var(--line); } }
+@keyframes dispDown { 0%, 35% { background: color-mix(in srgb, var(--neg) 16%, var(--card)); border-color: var(--neg); } 100% { background: var(--soft); border-color: var(--line); } }
+.disp-chip { display: inline-flex; flex-direction: column; align-items: flex-end; justify-content: center; flex: none; gap: 1px; padding: 3px 10px; border-radius: 10px; background: rgba(255, 255, 255, .16); line-height: 1.05; white-space: nowrap; }
+.disp-chip .dc-l { font-size: 10.5px; font-weight: 650; opacity: .9; font-variant-numeric: tabular-nums; }
+.disp-chip .dc-v { font-size: 15px; font-weight: 750; letter-spacing: -.2px; font-variant-numeric: tabular-nums; }
+.disp-chip.up { animation: chipUp 1.8s ease-out; }
+.disp-chip.down { animation: chipDown 1.8s ease-out; }
+@keyframes chipUp { 0%, 35% { background: rgba(126, 226, 184, .55); } 100% { background: rgba(255, 255, 255, .16); } }
+@keyframes chipDown { 0%, 35% { background: rgba(255, 138, 128, .6); } 100% { background: rgba(255, 255, 255, .16); } }
+@media (min-width: 900px) { .disp-chip { display: none !important; } }
+@media (max-width: 899px) {
+  #app[data-route="resumen"] .disp-chip, #app[data-route="archivo"] .disp-chip { display: none; }    /* en Resumen ya está en grande */
+  #app.has-disp:not([data-route="resumen"]):not([data-route="archivo"]) .top .brand-s { display: none; }   /* ocupa el lugar del nombre «Flujo» */
+  #app.route-hoja .disp-chip { padding: 2px 9px; }
+}
+@media (prefers-reduced-motion: reduce) { .side-disp.up, .side-disp.down, .disp-chip.up, .disp-chip.down { animation: none; } }

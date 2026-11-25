@@ -10,7 +10,7 @@ import { todaySerial } from './format.js';
 const { el, toast } = ui;
 const $ = (s, r = document) => r.querySelector(s);
 const optional = async (p) => { try { return await import(p); } catch (e) { console.warn('[módulo opcional no disponible]', p, e.message); return null; } };
-const VERSION = '44';
+const VERSION = '45';
 
 const state = { engine: null, store: null, sync: null, saver: null, archive: null, mods: {}, screenObj: null, grid: null, showHidden: false, saveStatus: 'idle', online: navigator.onLine };
 
@@ -32,6 +32,7 @@ const ctx = {
     for (const s of sids || []) eng.dirty.add(s);
     if (state.saver) state.saver.markDirty(); else if (state.store) scheduleFallbackSave();
     updatePill();
+    updateDisp();                                                     // v45: el disponible del menú / de la barra de arriba, con cada cambio
     if (src !== 'grid' && state.screenObj && state.screenObj.refresh) { try { state.screenObj.refresh(); } catch (e) { console.warn(e); } }
   },
 };
@@ -480,7 +481,39 @@ async function updatePill() {
   pill.className = 'pill ' + cls; txt.textContent = t;
   updateConnBanner();
 }
-setInterval(() => { if (state.engine) updatePill(); }, 5000);
+setInterval(() => { if (state.engine) { updatePill(); updateDisp(); } }, 5000);
+
+/* ------------------------------------------------------------------ v45: «Disponible» a la vista mientras se anota
+ * La misma cifra de «Disponible hoy» del Resumen (bancos menos provisiones) se ve en el menú de la izquierda (computador, iPad
+ * horizontal) y en la barra de arriba (celular, iPad vertical). Se lee después de cada cambio; cuando se mueve, se ve cuánto subió o
+ * bajó: en el menú queda escrito hasta el cambio siguiente y en la barra de arriba reemplaza unos segundos al rótulo «Disponible». */
+const disp = { value: undefined, delta: null, flashT: 0, labelT: 0 };
+function updateDisp() {
+  const side = $('#sideDisp'), top = $('#topDisp'), D = state.mods.dashboard;
+  if (!side || !top) return;
+  let r = null;
+  if (state.engine && D && typeof D.readAvailable === 'function') { try { r = D.readAvailable(state.engine); } catch (e) { r = null; } }
+  const show = !!(r && r.ok);
+  side.hidden = !show; top.hidden = !show;
+  $('#app').classList.toggle('has-disp', show);
+  if (!show) return;
+  const v = typeof r.value === 'number' && Number.isFinite(r.value) ? r.value : null;
+  const prev = disp.value; disp.value = v;
+  const moved = typeof prev === 'number' && v !== null && Math.abs(v - prev) >= 0.005;
+  if (moved) disp.delta = v - prev;
+  const txt = v === null ? '—' : ui.money(v);
+  $('#sideDispV').textContent = txt; $('#topDispV').textContent = txt;
+  const d = $('#sideDispD'), up = disp.delta !== null && disp.delta > 0;
+  if (disp.delta !== null) {
+    d.textContent = (up ? '▲ ' : '▼ ') + ui.money(Math.abs(disp.delta)); d.className = 'sd-d ' + (up ? 'pos' : 'neg');
+    $('#sideDispN').textContent = 'con el último cambio';
+  }
+  if (!moved) return;
+  for (const box of [side, top]) { box.classList.remove('up', 'down'); void box.offsetWidth; box.classList.add(up ? 'up' : 'down'); }   // reinicia el destello
+  clearTimeout(disp.flashT); disp.flashT = setTimeout(() => { for (const box of [side, top]) box.classList.remove('up', 'down'); }, 1800);
+  const l = $('#topDispL'); l.textContent = (up ? '▲ ' : '▼ ') + ui.money(Math.abs(disp.delta));
+  clearTimeout(disp.labelT); disp.labelT = setTimeout(() => { l.textContent = 'Disponible'; }, 8000);
+}
 
 /**
  * Aviso rojo arriba de todas las pantallas cuando este dispositivo NO está conectado a GitHub (o el token ya no sirve):
@@ -539,6 +572,8 @@ async function route() {
   const key = SCREENS[name] ? name : 'resumen';
   if (key !== 'hoja') state.fxDraft = null;                 // v37: salir de las hojas deja la fórmula de otra hoja sin terminar
   $('#app').classList.toggle('route-hoja', key === 'hoja' || (key === 'archivo' && !!arg) || (key === 'resumen' && !state.mods.dashboard));   // el visor del archivo también es una hoja: barra superior compacta
+  $('#app').dataset.route = key;                            // v45: en el celular, el disponible de la barra de arriba no sale en Resumen (ya está en grande) ni en Archivo
+  updateDisp();
   const navKey = key === 'hoja' || key === 'archivo' ? 'hojas' : key === 'rubros' && !document.querySelector('.side [data-nav="rubros"]') ? 'resumen' : key;
   document.querySelectorAll('[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === navKey || (key === 'rubros' && a.dataset.nav === 'resumen' && !a.closest('.side'))));
   $('#title').textContent = TITLES[key];

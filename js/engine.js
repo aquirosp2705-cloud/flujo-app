@@ -139,6 +139,41 @@ export function colIndex(letters) { let n = 0; for (const ch of letters.toUpperC
 export function addrToA1(r, c) { return colLetter(c) + (r + 1); }
 export function a1ToAddr(a1) { const m = /^\$?([A-Za-z]+)\$?(\d+)$/.exec(a1.trim()); if (!m) return null; return { r: parseInt(m[2], 10) - 1, c: colIndex(m[1]) }; }
 
+/* v45: cada referencia de una fórmula (con o sin hoja delante; celda A1, rango A1:B2, columnas H:H o filas 5:9). No cuentan los textos
+ * entre comillas, los nombres de función (LOG10( …) ni los números (1E5). fn({ sheet, text, r0, c0, r1, c1 }) devuelve el texto que
+ * reemplaza la referencia ENTERA (hoja incluida) o undefined para dejarla igual. sheet = hoja escrita delante (sin comillas) o null. */
+const REF_ANY = /(?:('(?:[^']|'')+'|[A-Za-z_À-ɏ][\w.À-ɏ]*)!)?(?:(\$?[A-Za-z]{1,3}\$?\d{1,7})(?::(\$?[A-Za-z]{1,3}\$?\d{1,7}))?|(\$?[A-Za-z]{1,3}):(\$?[A-Za-z]{1,3})|(\$?\d{1,7}):(\$?\d{1,7}))/g;
+const ALL = 1e9;
+export function mapRefs(f, fn) {
+  if (typeof f !== 'string' || f[0] !== '=') return f;
+  const t = f.replace(/"(?:[^"]|"")*"?/g, (m) => ' '.repeat(m.length));
+  let out = '', last = 0, m;
+  REF_ANY.lastIndex = 0;
+  while ((m = REF_ANY.exec(t))) {
+    const prev = m.index > 0 ? t[m.index - 1] : '', next = t[m.index + m[0].length] || '';
+    if (/[\w.$:!'À-ɏ]/.test(prev) || /[\w(!:À-ɏ]/.test(next)) continue;
+    let x;
+    if (m[2]) {
+      const a = a1ToAddr(m[2]), b = m[3] ? a1ToAddr(m[3]) : a;
+      if (!a || !b) continue;
+      x = { r0: Math.min(a.r, b.r), c0: Math.min(a.c, b.c), r1: Math.max(a.r, b.r), c1: Math.max(a.c, b.c) };
+    } else if (m[4]) {
+      const a = colIndex(m[4].replace('$', '')), b = colIndex(m[5].replace('$', ''));
+      x = { r0: 0, r1: ALL, c0: Math.min(a, b), c1: Math.max(a, b) };
+    } else {
+      const a = +m[6].replace('$', '') - 1, b = +m[7].replace('$', '') - 1;
+      if (a < 0 || b < 0) continue;
+      x = { r0: Math.min(a, b), r1: Math.max(a, b), c0: 0, c1: ALL };
+    }
+    x.sheet = m[1] ? (m[1][0] === "'" ? m[1].slice(1, -1).replace(/''/g, "'") : m[1]) : null;
+    x.text = f.slice(m.index + (m[1] ? m[1].length + 1 : 0), m.index + m[0].length);
+    const rep = fn(x);
+    if (rep === undefined || rep === null) continue;
+    out += f.slice(last, m.index) + rep; last = m.index + m[0].length;
+  }
+  return last ? out + f.slice(last) : f;
+}
+
 export class Sheet {
   constructor(meta, data, nStyles) {
     this.id = meta.id; this.name = meta.name; this.hidden = !!meta.hidden; this.tabColor = meta.tabColor || null;
@@ -429,6 +464,76 @@ export class Engine {
     // los estilos viajan con la copia
     for (let i = 0; i <= r1 - r0; i++) for (let j = 0; j <= c1 - c0; j++) b.setStyle(dr + i, dc + j, a.styleAt(r0 + i, c0 + j));
     return this._changes(ch);
+  }
+  /**
+   * v45: MUEVE un rango (cortar y pegar), como Excel: las fórmulas movidas siguen apuntando a las MISMAS celdas (=I44+J44 en M40
+   * movida a M41 sigue siendo =I44+J44; al copiar sí cambia a =I45+J45), las fórmulas que usaban las celdas movidas pasan a usar su
+   * nuevo lugar (en cualquier hoja) y el formato y los textos viajan con las celdas. Todo es UN paso del motor: un solo Deshacer.
+   * Devuelve { changes, sids }: celdas cuyo valor cambió y TODAS las hojas que cambiaron, también las que solo cambiaron el texto
+   * de una fórmula (CONSOL apuntando a una celda movida): hay que guardarlas aunque su valor siga igual.
+   */
+  moveRange(sid, r0, c0, r1, c1, dsid, dr, dc) {
+    const a = this._ld(sid), b = this._ld(dsid), hf = this.hf;
+    // hojas sin abrir (carga diferida) que usan la hoja de origen: se cargan ANTES, para que sus fórmulas también sigan a las celdas
+    for (const s of this.sheets) if (!s.loaded && s.refs.has(a)) this.ensureLoaded(s.id);
+    const h = r1 - r0 + 1, w = c1 - c0 + 1;
+    const src = { start: { sheet: a.hfId, row: r0, col: c0 }, end: { sheet: a.hfId, row: r1, col: c1 } };
+    const dst = { sheet: b.hfId, row: dr, col: dc };
+    if (!hf.isItPossibleToMoveCells(src, dst)) throw new Error('esa parte de la hoja no se puede mover');
+    const deps = this._dependentsOf(a, r0, c0, r1, c1);
+    const sids = new Set([a.id, b.id]); for (const d of deps) sids.add(d.sh.id);
+    const styles = [], texts = [];
+    for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) { styles.push(a.styleAt(r0 + i, c0 + j)); texts.push(a.textCells.has(K(r0 + i, c0 + j))); }
+    const inBlock = (x) => x.r0 >= r0 && x.r1 <= r1 && x.c0 >= c0 && x.c1 <= c1;
+    let ch;
+    if (a === b) ch = hf.moveCells(src, dst);
+    else {
+      // A otra hoja: HyperFormula 3.4 olvida de qué hoja eran las referencias escritas sin nombre de hoja. Antes de mover se les pone el
+      // nombre de la hoja de origen: en las fórmulas movidas, a las que apuntan FUERA de lo movido (siguen apuntando allá, como en Excel);
+      // en las fórmulas de la hoja de origen, a las que apuntan DENTRO de lo movido (así el motor las lleva a su nuevo lugar).
+      const pre = sheetRef(a.name) + '!', edits = [];
+      const prefix = (r, c, want) => {                         // se calcula ANTES: dentro de batch() el motor no deja leer fórmulas
+        if (a.textCells.has(K(r, c))) return;
+        const f = hf.getCellSerialized({ sheet: a.hfId, row: r, col: c });
+        if (typeof f !== 'string' || f[0] !== '=') return;
+        const g = mapRefs(f, (x) => (!x.sheet && want(x) ? pre + x.text : undefined));
+        if (g !== f) edits.push([r, c, g]);
+      };
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) prefix(r, c, (x) => !inBlock(x));
+      for (const d of deps) if (d.sh === a && !inBlock({ r0: d.r, r1: d.r, c0: d.c, c1: d.c })) prefix(d.r, d.c, inBlock);
+      ch = hf.batch(() => {
+        for (const [r, c, g] of edits) hf.setCellContents({ sheet: a.hfId, row: r, col: c }, g);
+        hf.moveCells(src, dst);
+      });
+    }
+    for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) a.textCells.delete(K(r0 + i, c0 + j));
+    for (let i = 0; i < h; i++) for (let j = 0; j < w; j++) b.textCells.delete(K(dr + i, dc + j));
+    texts.forEach((t, n) => { if (t) b.textCells.add(K(dr + Math.floor(n / w), dc + (n % w))); });
+    styles.forEach((s, n) => b.setStyle(dr + Math.floor(n / w), dc + (n % w), s));
+    if (dr + h > b.rows) b.rows = dr + h; if (dc + w > b.cols) b.cols = dc + w;
+    for (const s of sids) this.dirty.add(s);
+    return { changes: this._changes(ch), sids: [...sids] };
+  }
+  /** v45: celdas con fórmulas que usan alguna celda del rango, directamente o a través de un rango (SUMA(M38:M42)), en cualquier hoja. */
+  _dependentsOf(sh, r0, c0, r1, c1) {
+    const out = [], seen = new Set(), seenR = new Set(), queue = [];
+    const bySheet = new Map(this.sheets.map((s) => [s.hfId, s]));
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) queue.push({ sheet: sh.hfId, row: r, col: c });
+    let guard = 0;
+    while (queue.length && guard++ < 500000) {
+      let deps;
+      try { deps = this.hf.getCellDependents(queue.pop()); } catch (e) { continue; }
+      for (const d of deps || []) {
+        if (d.start) {                                       // un rango que contiene la celda: se siguen las fórmulas que lo usan
+          const k = d.start.sheet + ':' + d.start.row + ':' + d.start.col + ':' + d.end.row + ':' + d.end.col;
+          if (!seenR.has(k)) { seenR.add(k); queue.push(d); }
+          continue;
+        }
+        const k = d.sheet + ':' + d.row + ':' + d.col, s = bySheet.get(d.sheet);
+        if (s && !seen.has(k)) { seen.add(k); out.push({ sh: s, r: d.row, c: d.col }); }
+      }
+    }
+    return out;
   }
   undo() { if (!this.hf.isThereSomethingToUndo()) return null; return this._markDirty(this._changes(this.hf.undo())); }
   redo() { if (!this.hf.isThereSomethingToRedo()) return null; return this._markDirty(this._changes(this.hf.redo())); }

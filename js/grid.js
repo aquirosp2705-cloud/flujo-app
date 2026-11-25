@@ -7,7 +7,8 @@
  * Teclado: flechas, Shift+flechas, Ctrl+flechas, Tab/Enter, Inicio/Fin, RePág/AvPág, F2, Supr, Ctrl+C/X/V/Z/Y/D/R/A/F.
  * Ratón: clic/arrastre, doble clic = editar, asa de relleno (cuadrito azul) arrastrando hacia abajo/derecha, borde de encabezado = ancho.
  * Táctil: tocar = seleccionar, tocar de nuevo = editar, arrastrar el circulito azul de la esquina = seleccionar un rango (abajo se ven
- *   su suma, promedio y cuenta); para copiar hacia abajo está «Rellenar ↓». Barra de herramientas con deshacer, copiar, pegar, zoom, ir al final.
+ *   su suma, promedio y cuenta); para copiar hacia abajo está «Rellenar ↓». Barra de herramientas con deshacer, copiar, cortar, pegar, zoom, ir al final.
+ * Cortar y pegar (Ctrl+X, «Cortar») MUEVE como Excel (v45): las fórmulas movidas no cambian sus referencias; copiar y pegar sí las desplaza.
  * Formato: negrita, color de letra, relleno y bordes (raya abajo, raya arriba, arriba y abajo, todos, contorno, sin bordes); se deshace con Ctrl+Z.
  */
 import { cellKey as K, colLetter, addrToA1, a1ToAddr, sheetRef } from './engine.js';
@@ -79,6 +80,7 @@ export class SheetGrid {
         <button data-act="undo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer">↶<span class="fxg-lbl"> Deshacer</span></button>
         <button data-act="redo" title="Rehacer (Ctrl+Y)" aria-label="Rehacer">↷<span class="fxg-lbl"> Rehacer</span></button>
         <button data-act="copy" title="Copiar (Ctrl+C)">Copiar</button>
+        <button data-act="cut" title="Cortar (Ctrl+X): para MOVER celdas; las fórmulas no cambian sus referencias, como en Excel">Cortar</button>
         <button data-act="paste" title="Pegar (Ctrl+V)">Pegar</button>
         <button data-act="fill" title="Rellenar hacia abajo (Ctrl+D)">Rellenar ↓</button>
         <button data-act="clear" title="Borrar contenido (Supr)">Borrar</button>
@@ -284,7 +286,7 @@ export class SheetGrid {
     if (this.tools) {
       for (const b of this.tools.querySelectorAll('button[data-act]')) {
         const act = b.dataset.act;
-        b.hidden = ro && (act === 'undo' || act === 'redo' || act === 'paste' || act === 'fill' || act === 'clear' || act === 'bold' || act === 'fc' || act === 'bg' || act === 'bd' || act === 'nf' || act === 'unfmt' || (act === 'find' && !this.opts.onFind));
+        b.hidden = ro && (act === 'undo' || act === 'redo' || act === 'cut' || act === 'paste' || act === 'fill' || act === 'clear' || act === 'bold' || act === 'fc' || act === 'bg' || act === 'bd' || act === 'nf' || act === 'unfmt' || (act === 'find' && !this.opts.onFind));
       }
     }
   }
@@ -933,8 +935,8 @@ export class SheetGrid {
     return undefined;
   }
   /** steps = cuántas operaciones del motor hizo este cambio (rellenar pega fila por fila): Deshacer las revierte todas juntas. */
-  _afterChange(changes, { fromUndo = false, steps = 1 } = {}) {
-    if (!fromUndo) { this._pushHist({ hf: true, steps }); this._redoN = []; }
+  _afterChange(changes, { fromUndo = false, steps = 1, dirty = null } = {}) {
+    if (!fromUndo) { this._pushHist({ hf: true, steps, dirty }); this._redoN = []; }   // v45: dirty = hojas que tocó un «mover» (para guardarlas también al deshacer)
     this._relayoutIfGrown();
     this._paint(true); this._paintSel(); this._updateBar(); this._updateStatus();
     this.opts.onChange({ sid: this.sid, changes });
@@ -974,17 +976,20 @@ export class SheetGrid {
     let all = null;
     for (let i = 0; i < n; i++) { const ch = this.eng.undo(); if (ch === null) break; all = (all || []).concat(ch); }
     if (all === null) { this._toast('Nada que deshacer'); return; }
-    (this._redoN || (this._redoN = [])).push(n);
+    // v45: deshacer un «mover» devuelve también fórmulas de otras hojas cuyo valor no cambió (CONSOL vuelve a la celda de antes): se guardan
+    if (h.dirty) for (const s of h.dirty) this.eng.dirty.add(s);
+    (this._redoN || (this._redoN = [])).push(h.dirty ? { n, dirty: h.dirty } : n);
     this._afterChange(all, { fromUndo: true });
   }
   _redo() {
     if (this.opts.readOnly) return;
     if (!(this._redoN && this._redoN.length)) { this._toast('Nada que rehacer en esta hoja'); return; }   // v40
-    const n = this._redoN.pop();
+    const x = this._redoN.pop(), n = typeof x === 'number' ? x : x.n, dirty = typeof x === 'number' ? null : x.dirty;
     let all = null;
     for (let i = 0; i < n; i++) { const ch = this.eng.redo(); if (ch === null) break; all = (all || []).concat(ch); }
     if (all === null) { this._toast('Nada que rehacer'); return; }
-    this._pushHist({ hf: true, steps: n });                                  // vuelve a quedar para Deshacer, en su orden
+    if (dirty) for (const s of dirty) this.eng.dirty.add(s);
+    this._pushHist({ hf: true, steps: n, dirty });                           // vuelve a quedar para Deshacer, en su orden
     this._afterChange(all, { fromUndo: true });
   }
   _pushHist(x) { if (!this._hist) this._hist = []; this._hist.push(x); if (this._hist.length > 200) this._hist.shift(); }
@@ -1239,6 +1244,13 @@ export class SheetGrid {
     const text = this._setClip(false);
     try { await navigator.clipboard.writeText(text); this._toast('Copiado'); } catch (err) { this._toast('Copiado dentro de la app (el navegador no dio acceso al portapapeles)'); }
   }
+  /** v45: «Cortar» en la barra (celular y tableta, sin Ctrl+X): marca lo seleccionado para MOVERLO con «Pegar». */
+  async _cutButton() {
+    if (this.opts.readOnly) return;
+    const text = this._setClip(true);
+    try { await navigator.clipboard.writeText(text); } catch (err) { /* al pegar se usa lo cortado dentro de la app */ }
+    this._toast('Cortado: elige dónde va y toca Pegar');
+  }
   async _pasteButton() {
     if (this.opts.readOnly) return;                // sin pegar (y sin pedir permiso para leer el portapapeles)
     let text = null;
@@ -1251,26 +1263,24 @@ export class SheetGrid {
     if (this.opts.readOnly || !this.sh || text == null) return;
     const R = this._rect(); let ch = [];
     let steps = 1;
+    let moved = null;
     if (this.clip && clipNorm(text) === clipNorm(this.clip.text)) {      // v40: se compara sin los «\r» que añade Windows
       const k = this.clip, rows = k.r1 - k.r0 + 1, cols = k.c1 - k.c0 + 1;
-      const tr = Math.max(1, Math.floor((R.r1 - R.r0 + 1) / rows)), tc = Math.max(1, Math.floor((R.c1 - R.c0 + 1) / cols));
-      steps = 0;
-      for (let i = 0; i < tr; i++) for (let j = 0; j < tc; j++) { ch = ch.concat(this.eng.copyPaste(k.sid, k.r0, k.c0, k.r1, k.c1, this.sid, R.r0 + i * rows, R.c0 + j * cols)); steps++; }
       if (k.cut) {
-        // v40: al cortar solo se vacían las celdas de origen que NO quedaron dentro de lo pegado (mover un bloque una fila abajo ya no borra nada)
-        const d0r = R.r0, d0c = R.c0, d1r = R.r0 + tr * rows - 1, d1c = R.c0 + tc * cols - 1, same = k.sid === this.sid;
-        for (let r = k.r0; r <= k.r1; r++) {
-          let c = k.c0;
-          while (c <= k.c1) {
-            const inside = (cc) => same && r >= d0r && r <= d1r && cc >= d0c && cc <= d1c;
-            if (inside(c)) { c++; continue; }
-            let e = c; while (e + 1 <= k.c1 && !inside(e + 1)) e++;
-            ch = ch.concat(this.eng.clear(k.sid, r, c, r, e)); steps++; c = e + 1;
-          }
-        }
+        // v45: cortar y pegar = MOVER, como Excel: las fórmulas movidas NO cambian sus referencias (=I44+J44 sigue igual en otra fila), las
+        // fórmulas que las usaban las siguen a su nuevo lugar y el formato viaja con ellas. Se pega una sola vez, en la esquina elegida.
+        let res;
+        try { res = this.eng.moveRange(k.sid, k.r0, k.c0, k.r1, k.c1, this.sid, R.r0, R.c0); }
+        catch (err) { this._toast('No se pudo mover: ' + (err && err.message ? err.message : err)); return; }
+        ch = res.changes; moved = res.sids;
         this.clip = null;
+        this.anchor = { r: R.r0, c: R.c0 }; this.focus = { r: R.r0 + rows - 1, c: R.c0 + cols - 1 };
+      } else {
+        const tr = Math.max(1, Math.floor((R.r1 - R.r0 + 1) / rows)), tc = Math.max(1, Math.floor((R.c1 - R.c0 + 1) / cols));
+        steps = 0;
+        for (let i = 0; i < tr; i++) for (let j = 0; j < tc; j++) { ch = ch.concat(this.eng.copyPaste(k.sid, k.r0, k.c0, k.r1, k.c1, this.sid, R.r0 + i * rows, R.c0 + j * cols)); steps++; }
+        this.anchor = { r: R.r0, c: R.c0 }; this.focus = { r: R.r0 + tr * rows - 1, c: R.c0 + tc * cols - 1 };
       }
-      this.anchor = { r: R.r0, c: R.c0 }; this.focus = { r: R.r0 + tr * rows - 1, c: R.c0 + tc * cols - 1 };
     } else {
       const lines = text.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n');
       const matrix = []; const styleFix = [];
@@ -1291,7 +1301,7 @@ export class SheetGrid {
       for (const [r, c, nf] of styleFix) this.sh.setStyle(r, c, this.eng.deriveStyle(this.sh.styleAt(r, c), { nf }));
       this.anchor = { r: R.r0, c: R.c0 }; this.focus = { r: R.r0 + matrix.length - 1, c: R.c0 + width - 1 };
     }
-    this._afterChange(ch, { steps: Math.max(1, steps) }); this._afterSelect(false);
+    this._afterChange(ch, { steps: Math.max(1, steps), dirty: moved }); this._afterSelect(false);
   }
 
   /* ------------------------------------------------------------------ varios */
@@ -1302,6 +1312,7 @@ export class SheetGrid {
     if (this.xdraft) { this._toast('Primero termina la fórmula: «Listo» la guarda y «Cancelar» la deja como estaba.'); return; }   // v37
     if (act === 'find') { if (this.opts.onFind) this.opts.onFind(); return; }
     if (act === 'copy') return this._copyButton();
+    if (act === 'cut') return this._cutButton();
     if (act === 'paste') return this._pasteButton();
     if (act === 'undo') return this._undo();
     if (act === 'redo') return this._redo();

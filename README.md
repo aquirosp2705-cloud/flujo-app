@@ -174,6 +174,18 @@ la abre, prueba la conexión, la guarda en el dispositivo y baja los datos. No i
   ventana y el Excel, celular y pantalla ancha). `close-test.html` y `dashboard-test.html` montan el Resumen con
   `closeSummary: false` (no abren la ventana del resumen al cerrar).
 
+## Mover celdas como Excel y «Disponible» a la vista (v45)
+
+- **Cortar y pegar = mover, como Excel.** Ctrl+X / Ctrl+V (y el botón nuevo «Cortar» de la barra de la hoja, que en el celular está en «⋯»)
+  ya no desplazan las referencias: `=I44+J44` en M40 movida a M41 sigue siendo `=I44+J44`. Solo copiar y pegar las desplaza (`=I45+J45`).
+  Las fórmulas que usaban las celdas movidas pasan a usar su nuevo lugar en cualquier hoja (si CONSOL apuntaba a la celda, la sigue), y el
+  formato viaja con las celdas. Un solo Deshacer lo revierte todo. Motor: `Engine.moveRange` (HyperFormula `moveCells`; entre hojas se
+  escribe antes el nombre de la hoja de origen en las referencias, porque HyperFormula 3.4 lo pierde) y `Engine._dependentsOf`, que marca
+  para guardar también las hojas cuya fórmula solo cambió de texto. Antes de mover se cargan las hojas diferidas que usan la hoja de origen.
+- **Disponible mientras se anota.** La cifra de «Disponible hoy» (`readAvailable`: M9 de CONSOL, o D22) se ve en el menú de la izquierda
+  (computador e iPad en horizontal) y en la barra de arriba (celular e iPad en vertical; no en Resumen, donde ya está en grande). Se lee
+  después de cada cambio (`ctx.changed`): cuando se mueve, destella en verde o rojo y muestra cuánto subió o bajó con el último cambio.
+
 ## Formato de número en la hoja (v44)
 
 - Botón «123 ▾» en la barra de la hoja: dólares con o sin centavos, número con o sin decimales, porcentaje, fecha, mes y año y General. Cambia solo el formato (`nf`) de lo seleccionado; se deshace con Ctrl+Z (`grid._numFormat`, `_numMenu`).

@@ -38,6 +38,12 @@
 <div id="app" hidden>
   <aside class="side" aria-label="Navegación">
     <div class="brand">Flujo</div>
+    <div class="side-disp" id="sideDisp" role="status" aria-live="polite" title="Bancos menos provisiones (total «Mes actual» de CONSOL). Se actualiza con cada cambio." hidden>
+      <span class="sd-l">Disponible</span>
+      <span class="sd-v" id="sideDispV">—</span>
+      <span class="sd-d" id="sideDispD"></span>
+      <span class="sd-n" id="sideDispN">Cambia con cada movimiento</span>
+    </div>
     <a href="#/resumen" data-nav="resumen"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Resumen</a>
     <a href="#/rubros" data-nav="rubros"><svg viewBox="0 0 24 24"><path d="M4 20V11M10 20V5M16 20v-6M21 20H3"/></svg>Ingresos y egresos</a>
     <a href="#/mov" data-nav="mov"><svg viewBox="0 0 24 24"><path d="M7 4v14m0 0l-3-3m3 3l3-3M17 20V6m0 0l-3 3m3-3l3 3"/></svg>Movimientos</a>
@@ -53,6 +59,7 @@
     <header class="top">
       <span class="brand-s">Flujo</span>
       <h1 id="title">Resumen</h1>
+      <span class="disp-chip" id="topDisp" role="status" aria-live="polite" title="Disponible: bancos menos provisiones. Se actualiza con cada cambio." hidden><span class="dc-l" id="topDispL">Disponible</span><span class="dc-v" id="topDispV">—</span></span>
       <a href="#/buscar" class="icon-btn top-search" aria-label="Buscar en todas las hojas" title="Buscar"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></a>
       <button class="pill" id="syncPill" type="button" aria-label="Estado de sincronización"><span class="dot"></span><span id="syncText">…</span></button>
     </header>
